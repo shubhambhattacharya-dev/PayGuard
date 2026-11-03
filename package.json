@@ -1,0 +1,17 @@
+{
+  "name": "payguard-root",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PayGuard - Autonomous B2B Procurement & Invoice Settlement Copilot with Deterministic Financial Policy Engine",
+  "packageManager": "pnpm@11.21.0",
+  "scripts": {
+    "build": "pnpm --recursive run build",
+    "test": "pnpm --recursive run test",
+    "eval": "pnpm --filter @payguard/eval run eval",
+    "lint": "pnpm --recursive run lint",
+    "clean": "pnpm --recursive run clean"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

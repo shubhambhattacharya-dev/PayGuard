@@ -1,0 +1,64 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import 'ag-grid-community/styles/ag-grid.css';
+@import 'ag-grid-community/styles/ag-theme-quartz.css';
+
+:root {
+  --foreground-rgb: 24, 30, 27;
+  --background-start-rgb: 248, 249, 248;
+  --background-end-rgb: 248, 249, 248;
+}
+
+body {
+  color: rgb(var(--foreground-rgb));
+  background: #f8f9f8;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom AG Grid Quartz styling to match PayGuard Enterprise aesthetic */
+.ag-theme-quartz {
+  --ag-background-color: #ffffff;
+  --ag-header-background-color: #ffffff;
+  --ag-header-foreground-color: #68726e;
+  --ag-header-cell-hover-background-color: #f8f9f8;
+  --ag-header-cell-moving-background-color: #f1f4f2;
+  --ag-border-color: #e6e9e7;
+  --ag-row-border-color: #f1f4f2;
+  --ag-row-hover-color: #f8faf9;
+  --ag-selected-row-background-color: #f0f7f3;
+  --ag-font-size: 13px;
+  --ag-font-family: 'Inter', system-ui, sans-serif;
+  --ag-cell-horizontal-padding: 16px;
+  --ag-row-height: 52px;
+  --ag-header-height: 44px;
+}
+
+.ag-theme-quartz .ag-header-cell-label {
+  font-weight: 500;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  color: #68726e;
+}
+
+/* Cell change flash animation */
+@keyframes cellFlashAmber {
+  0% { background-color: #fef3c7; }
+  100% { background-color: transparent; }
+}
+
+@keyframes cellFlashGreen {
+  0% { background-color: #d1fae5; }
+  100% { background-color: transparent; }
+}
+
+.cell-flash-amber {
+  animation: cellFlashAmber 1.2s ease-out;
+}
+
+.cell-flash-green {
+  animation: cellFlashGreen 1.2s ease-out;
+}
