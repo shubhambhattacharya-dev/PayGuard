@@ -1,0 +1,39 @@
+name: PayGuard Production CI
+
+on:
+  push:
+    branches: [main, feat/*]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    name: Lint, Typecheck & Test Suite
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.21.0
+
+      - name: Setup Node.js 22 LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install Monorepo Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Strict TypeScript Compilation
+        run: pnpm run build
+
+      - name: Run Vitest Unit & Invariant Tests
+        run: pnpm run test
+
+      - name: Verify Web Next.js Build
+        run: pnpm --filter @payguard/web run build
