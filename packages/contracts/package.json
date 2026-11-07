@@ -5,15 +5,8 @@
   "description": "Shared contracts, branded types, and schemas for PayGuard",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "default": "./dist/index.js"
-    }
-  },
   "scripts": {
-    "build": "tsc -b --force",
+    "build": "tsc -p tsconfig.json",
     "clean": "rm -rf dist",
     "test": "vitest run"
   },
