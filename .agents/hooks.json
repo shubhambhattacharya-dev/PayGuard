@@ -1,0 +1,24 @@
+{
+  "centaur-iron-lock": {
+    "enabled": true,
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "node C:\\Users\\shubh\\.gemini\\config\\scripts\\centaur-gate.mjs pre-invocation",
+        "timeout": 5
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "write_file|edit_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node C:\\Users\\shubh\\.gemini\\config\\scripts\\centaur-gate.mjs pre-tool",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
