@@ -1,0 +1,21 @@
+{
+  "name": "@payguard/api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Fastify API Gateway & Policy Engine for PayGuard",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@payguard/contracts": "workspace:*",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}
