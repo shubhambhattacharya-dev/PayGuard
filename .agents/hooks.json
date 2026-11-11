@@ -1,6 +1,13 @@
 {
   "centaur-iron-lock": {
     "enabled": true,
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "node C:\\Users\\shubh\\.gemini\\config\\scripts\\centaur-gate.mjs session-start",
+        "timeout": 5
+      }
+    ],
     "PreInvocation": [
       {
         "type": "command",
