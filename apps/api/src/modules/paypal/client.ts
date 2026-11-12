@@ -1,7 +1,7 @@
 export interface PayPalConfig {
   readonly clientId: string;
   readonly clientSecret: string;
-  readonly baseUrl: string; // e.g. https://api-m.sandbox.paypal.com
+  readonly baseUrl: string;
 }
 
 export interface PayPalClientDeps {
@@ -35,30 +35,168 @@ export interface PayPalClient {
   request<T>(options: PayPalRequestOptions): Promise<PayPalClientResult<T>>;
 }
 
-/**
- * 20% KERNEL — PayPal Sandbox OAuth2 & Resilient HTTP Client
- *
- * Business Rules (to be implemented manually in Closed-Book mode):
- * 1. Credential validation: fail closed with PAYPAL_AUTH_FAILED if clientId or clientSecret is missing.
- * 2. Token caching: exchange Basic credentials at POST /v1/oauth2/token (grant_type=client_credentials),
- *    cache the access token with a 60-second safety buffer before expiry using deps.nowMsFn, and reuse
- *    cached tokens on subsequent requests.
- * 3. Idempotency header: attach PayPal-Request-Id header on write requests when idempotencyKey is provided.
- * 4. 401 single refresh: on HTTP 401, clear the cached token, fetch one fresh token, and retry once;
- *    if it still returns 401, return ok: false with error PAYPAL_AUTH_FAILED.
- * 5. Terminal vs retryable status codes:
- *    - 422 returns PAYPAL_VALIDATION_ERROR immediately with ZERO retries.
- *    - 429 or 5xx retries with bounded exponential backoff (up to 3 retries), honoring Retry-After
- *      header when present, via deps.sleepFn; if retries exhaust, return PAYPAL_RETRY_EXHAUSTED.
- */
 export function createPayPalClient(
-  _config: PayPalConfig,
-  _deps: PayPalClientDeps = {},
+  config: PayPalConfig,
+  deps: PayPalClientDeps = {},
 ): PayPalClient {
+  const fetchFn = deps.fetchFn ?? fetch;
+  const nowMsFn = deps.nowMsFn ?? Date.now;
+  const sleepFn = deps.sleepFn ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  let cachedToken: string | null = null;
+  let tokenExpireAtMs = 0;
+
   return {
-    async request<T>(_options: PayPalRequestOptions): Promise<PayPalClientResult<T>> {
-      // TODO: SHUBHAM 20% KERNEL
-      throw new Error('KERNEL_NOT_IMPLEMENTED');
+    async request<T>(options: PayPalRequestOptions): Promise<PayPalClientResult<T>> {
+      if (!config.clientId.trim() || !config.clientSecret.trim()) {
+        return {
+          ok: false,
+          status: 401,
+          error: 'PAYPAL_AUTH_FAILED',
+          message: 'Invalid or missing PayPal credentials.',
+        };
+      }
+
+      if (!cachedToken || nowMsFn() >= tokenExpireAtMs - 60_000) {
+        const basicAuth = Buffer.from(`${config.clientId}:${config.clientSecret}`).toString('base64');
+        const tokenRes = await fetchFn(`${config.baseUrl}/v1/oauth2/token`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Basic ${basicAuth}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: 'grant_type=client_credentials',
+        });
+
+        if (!tokenRes.ok) {
+          return {
+            ok: false,
+            status: tokenRes.status,
+            error: 'PAYPAL_AUTH_FAILED',
+            message: 'Failed to obtain access token from Paypal',
+          };
+        }
+
+        const accessTokenJson = (await tokenRes.json()) as { access_token?: string; expires_in?: number };
+        if (!accessTokenJson.access_token) {
+          return {
+            ok: false,
+            status: 401,
+            error: 'PAYPAL_AUTH_FAILED',
+            message: 'Missing access_token in PayPal response',
+          };
+        }
+
+        cachedToken = accessTokenJson.access_token;
+        tokenExpireAtMs = nowMsFn() + (accessTokenJson.expires_in ?? 3600) * 1000;
+      }
+
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${cachedToken}`,
+        'Content-Type': 'application/json',
+      };
+
+      if (options.idempotencyKey) {
+        headers['PayPal-Request-Id'] = options.idempotencyKey;
+      }
+
+      const url = `${config.baseUrl}${options.path}`;
+      const reqInit: RequestInit = {
+        method: options.method,
+        headers,
+      };
+
+      if (options.body !== undefined) {
+        reqInit.body = JSON.stringify(options.body);
+      }
+
+      let lastStatus = 500;
+
+      for (let attempt = 0; attempt < 3; attempt++) {
+        let res = await fetchFn(url, reqInit);
+        lastStatus = res.status;
+
+        if (res.ok) {
+          const data = (await res.json()) as T;
+          return { ok: true, status: res.status, data };
+        }
+
+        if (res.status === 422) {
+          return {
+            ok: false,
+            status: 422,
+            error: 'PAYPAL_VALIDATION_ERROR',
+            message: 'PayPal validation error',
+          };
+        }
+
+        if (res.status === 401) {
+          cachedToken = null;
+          const basicAuth = Buffer.from(`${config.clientId}:${config.clientSecret}`).toString('base64');
+          const refreshRes = await fetchFn(`${config.baseUrl}/v1/oauth2/token`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Basic ${basicAuth}`,
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: 'grant_type=client_credentials',
+          });
+
+          if (!refreshRes.ok) {
+            return {
+              ok: false,
+              status: 401,
+              error: 'PAYPAL_AUTH_FAILED',
+              message: 'Failed to refresh token',
+            };
+          }
+
+          const refreshJson = (await refreshRes.json()) as { access_token?: string; expires_in?: number };
+          if (!refreshJson.access_token) {
+            return {
+              ok: false,
+              status: 401,
+              error: 'PAYPAL_AUTH_FAILED',
+              message: 'Missing token in refresh',
+            };
+          }
+
+          cachedToken = refreshJson.access_token;
+          tokenExpireAtMs = nowMsFn() + (refreshJson.expires_in ?? 3600) * 1000;
+          headers['Authorization'] = `Bearer ${cachedToken}`;
+
+          res = await fetchFn(url, reqInit);
+          lastStatus = res.status;
+
+          if (res.ok) {
+            const data = (await res.json()) as T;
+            return { ok: true, status: res.status, data };
+          }
+          if (res.status === 401) {
+            return {
+              ok: false,
+              status: 401,
+              error: 'PAYPAL_AUTH_FAILED',
+              message: 'Authentication failed after refresh',
+            };
+          }
+        }
+
+        if (res.status === 429 || res.status >= 500) {
+          if (attempt < 2) {
+            const retryAfterHeader = res.headers.get('Retry-After');
+            const delayMs = retryAfterHeader ? Number(retryAfterHeader) * 1000 : Math.pow(2, attempt) * 1000;
+            await sleepFn(delayMs);
+            continue;
+          }
+        }
+      }
+
+      return {
+        ok: false,
+        status: lastStatus,
+        error: 'PAYPAL_RETRY_EXHAUSTED',
+        message: 'PayPal request failed after retries',
+      };
     },
   };
 }

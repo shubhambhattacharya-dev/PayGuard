@@ -35,11 +35,11 @@ export function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="w-64 bg-forest-900 text-white flex flex-col justify-between h-screen fixed left-0 top-0 select-none z-30">
+    <aside className="w-full bg-forest-900 text-white flex flex-col md:w-64 md:h-screen md:fixed md:left-0 md:top-0 select-none z-30">
       {/* Top Branding & Workspace */}
       <div>
         {/* Brand */}
-        <div className="p-5 flex items-center gap-3 border-b border-forest-850">
+        <div className="px-4 py-3 sm:px-5 md:p-5 flex items-center gap-3 border-b border-forest-850">
           <div className="w-9 h-9 rounded-lg bg-emerald-600/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
             <ShieldCheck className="w-5 h-5" />
           </div>
@@ -50,7 +50,7 @@ export function Sidebar() {
         </div>
 
         {/* Workspace Selector */}
-        <div className="px-3 pt-3">
+        <div className="px-3 pt-2 md:pt-3">
           <button className="w-full flex items-center justify-between p-2.5 rounded-lg bg-forest-850/60 hover:bg-forest-850 border border-forest-800/80 text-left transition-colors">
             <div className="flex items-center gap-2.5">
               <Building2 className="w-4 h-4 text-emerald-400" />
@@ -61,7 +61,7 @@ export function Sidebar() {
         </div>
 
         {/* Navigation Links */}
-        <nav className="px-3 pt-5 space-y-1">
+        <nav aria-label="Primary navigation" className="flex gap-1 overflow-x-auto px-3 py-2 md:block md:space-y-1 md:overflow-visible md:pt-5">
           {NAV_ITEMS.map((item) => {
             const isActive = pathname.startsWith(item.href) || (item.href === '/payments' && pathname === '/');
             const Icon = item.icon;
@@ -70,7 +70,7 @@ export function Sidebar() {
               <Link
                 key={item.name}
                 href={item.href}
-                className={`flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-xs font-medium transition-colors ${
+                className={`flex shrink-0 items-center gap-2 md:gap-3 px-3 py-2.5 md:px-3.5 rounded-lg text-xs font-medium transition-colors ${
                   isActive
                     ? 'bg-forest-800 text-white border-l-2 border-emerald-400 shadow-sm'
                     : 'text-slate-300 hover:text-white hover:bg-forest-850/50'
@@ -85,7 +85,7 @@ export function Sidebar() {
       </div>
 
       {/* User Avatar at Bottom */}
-      <div className="p-3 border-t border-forest-850">
+      <div className="hidden md:block p-3 border-t border-forest-850">
         <button className="w-full flex items-center justify-between p-2 rounded-lg hover:bg-forest-850/60 transition-colors">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-full bg-forest-700 border border-forest-600 flex items-center justify-center text-xs font-semibold text-emerald-200">

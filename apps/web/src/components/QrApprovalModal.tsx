@@ -10,8 +10,10 @@ interface QrApprovalModalProps {
   singleUseCode: string;
   vendorName: string;
   amountFormatted: string;
-  onApproveSuccess: () => void;
+  onApproveSuccess: (toastMessage?: string) => void;
 }
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 
 export function QrApprovalModal({
   isOpen,
@@ -23,12 +25,15 @@ export function QrApprovalModal({
 }: QrApprovalModalProps) {
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [timeLeft, setTimeLeft] = useState(598); // 09:58
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
 
-    // Generate real QR code image
-    const approvalUrl = `https://payguard.sandbox.app/approve?t=${singleUseCode}&nonce=${Date.now()}`;
+    // Generate real QR code image pointing to the live /approvals page
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+    const approvalUrl = `${origin}/approvals?code=${encodeURIComponent(singleUseCode)}`;
     QRCode.toDataURL(approvalUrl, { width: 180, margin: 1 })
       .then((url) => setQrDataUrl(url))
       .catch((err) => console.error('Failed to generate QR', err));
@@ -103,16 +108,45 @@ export function QrApprovalModal({
           </span>
         </div>
 
-        {/* Quick Demo Simulate Scan Button */}
+        {errorMsg && (
+          <div className="mb-3 p-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs">
+            {errorMsg}
+          </div>
+        )}
+
+        {/* Live API QR Scan Approval Button */}
         <button
-          onClick={() => {
-            onApproveSuccess();
-            onClose();
+          disabled={submitting}
+          onClick={async () => {
+            setSubmitting(true);
+            setErrorMsg(null);
+            try {
+              const res = await fetch(`${API_URL}/v1/hitl/approve`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ singleUseCode }),
+              });
+              const data = (await res.json()) as {
+                success?: boolean;
+                toastMessage?: string;
+                error?: string;
+              };
+              if (!res.ok || !data.success) {
+                setErrorMsg(data.toastMessage ?? data.error ?? `HTTP ${res.status}`);
+                return;
+              }
+              onApproveSuccess(data.toastMessage ?? 'Gate re-ran, decision stood');
+              onClose();
+            } catch {
+              setErrorMsg('API unreachable — start @payguard/api on port 4000');
+            } finally {
+              setSubmitting(false);
+            }
           }}
-          className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-xs py-2.5 rounded-lg shadow transition-colors"
+          className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-medium text-xs py-2.5 rounded-lg shadow transition-colors"
         >
           <CheckCircle2 className="w-4 h-4" />
-          <span>Simulate mobile scan approval</span>
+          <span>{submitting ? 'Re-running policy gate...' : 'Authorize via /v1/hitl/approve'}</span>
         </button>
       </div>
     </div>

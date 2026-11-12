@@ -48,10 +48,11 @@ describe('PayGuard HTTP Server Boundary (server.ts)', () => {
     server = buildServer(500_000); // $5,000.00 seeded
   });
 
-  it('GET /healthz returns 200 OK with fiduciary law and PayPal sandbox readiness', async () => {
+  it('GET /healthz returns paypalSandboxReady=false without executor and true when executor is wired', async () => {
     const res = await server.inject<{
       status: string;
       paypalSandboxReady: boolean;
+      executionMode: string;
       fiduciaryLaw: string;
     }>({
       method: 'GET',
@@ -61,8 +62,27 @@ describe('PayGuard HTTP Server Boundary (server.ts)', () => {
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.status).toBe('ok');
-    expect(body.paypalSandboxReady).toBe(true);
+    expect(body.paypalSandboxReady).toBe(false);
+    expect(body.executionMode).toBe('in_memory_simulated');
     expect(body.fiduciaryLaw).toContain('The LLM proposes; deterministic financial policies dispose.');
+
+    const wiredServer = buildServer(500_000, {
+      paypalExecutor: {
+        execute: async () => ({
+          ok: true,
+          paypalOrderId: 'PP-LIVE-001',
+          captureId: 'CAP-001',
+          status: 'COMPLETED',
+        }),
+      },
+    });
+    const wiredRes = await wiredServer.inject<{ paypalSandboxReady: boolean; executionMode: string }>({
+      method: 'GET',
+      url: '/healthz',
+    });
+    expect(wiredRes.statusCode).toBe(200);
+    expect(wiredRes.json().paypalSandboxReady).toBe(true);
+    expect(wiredRes.json().executionMode).toBe('paypal_sandbox');
   });
 
   it('POST /v1/evaluate auto-approves grounded $64.00 order andPOST /v1/execute settles it', async () => {
@@ -237,5 +257,89 @@ describe('PayGuard HTTP Server Boundary (server.ts)', () => {
 
     expect(res.statusCode).toBe(403);
     expect(res.json().error).toBe('FORBIDDEN_CAPABILITY');
+  });
+
+  it('POST /v1/hitl/approve actually re-runs the policy gate and blocks if invoice was settled meanwhile (TOCTOU)', async () => {
+    const sharedInvoiceProposal: OrderProposal = {
+      ...overCapProposal,
+      invoiceId: 'INV-TOCTOU-99',
+    };
+
+    const evalRes = await server.inject<{
+      decision: { state: string };
+      qrApproval: { singleUseCode: string };
+    }>({
+      method: 'POST',
+      url: '/v1/evaluate',
+      payload: {
+        ownerId,
+        proposal: sharedInvoiceProposal,
+        idempotencyKey: 'idem-toctou-qr',
+      },
+    });
+    expect(evalRes.statusCode).toBe(200);
+    const qrCode = evalRes.json().qrApproval.singleUseCode;
+
+    // Simulate the same invoice getting settled via another path before QR scan
+    const underCapSameInvoice: OrderProposal = {
+      ...validProposalUnderCap,
+      invoiceId: 'INV-TOCTOU-99',
+    };
+    const otherEval = await server.inject<{ approvalId: string }>({
+      method: 'POST',
+      url: '/v1/evaluate',
+      payload: {
+        ownerId,
+        proposal: underCapSameInvoice,
+        idempotencyKey: 'idem-toctou-direct',
+      },
+    });
+    await server.inject({
+      method: 'POST',
+      url: '/v1/execute',
+      payload: {
+        ownerId,
+        proposal: underCapSameInvoice,
+        approvalId: otherEval.json().approvalId,
+        idempotencyKey: 'idem-toctou-direct',
+      },
+    });
+
+    // Now scan the pending QR: gate must re-run, detect duplicate invoice, and reject (422)
+    const hitlRes = await server.inject<{
+      success: boolean;
+      gateReRan: boolean;
+      error: string;
+    }>({
+      method: 'POST',
+      url: '/v1/hitl/approve',
+      payload: { singleUseCode: qrCode },
+    });
+
+    expect(hitlRes.statusCode).toBe(422);
+    expect(hitlRes.json().success).toBe(false);
+    expect(hitlRes.json().gateReRan).toBe(true);
+    expect(hitlRes.json().error).toBe(ReasonCode.REJECT_DUPLICATE_INVOICE);
+  });
+
+  it('POST /v1/transactions/:id/approve settles seeded review row and updates ledger', async () => {
+    const res = await server.inject<{
+      success: boolean;
+      gateReRan: boolean;
+      transaction: { id: string; status: string; policyCode: string; canApproveReject: boolean };
+      settlement: { amountMinor: number };
+    }>({
+      method: 'POST',
+      url: '/v1/transactions/tx-1/approve',
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.success).toBe(true);
+    expect(body.gateReRan).toBe(true);
+    expect(body.transaction.status).toBe('Paid');
+    expect(body.transaction.policyCode).toBe('AUTO_EXECUTED');
+    expect(body.transaction.canApproveReject).toBe(false);
+    expect(body.settlement.amountMinor).toBe(84250);
   });
 });

@@ -35,5 +35,8 @@ jobs:
       - name: Run Vitest Unit & Invariant Tests
         run: pnpm run test
 
+      - name: Run Golden Eval Harness (18 adversarial cases)
+        run: pnpm run eval
+
       - name: Verify Web Next.js Build
         run: pnpm --filter @payguard/web run build

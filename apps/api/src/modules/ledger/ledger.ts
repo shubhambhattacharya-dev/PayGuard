@@ -62,68 +62,40 @@ export class InMemoryLedger {
     await currentLock;
 
     try {
-      // =============================================================
-      // TODO: SHUBHAM 20% KERNEL (NO CODE HINTS - WRITE FROM SPEC)
-      // =============================================================
-      // Business Requirements (Check in this exact order):
-      //
-      // 1. Verify capability token:
-      //    Call assertCanExecuteOrder(input.token) inside a try/catch.
-      //    If it throws, return { success: false, error: 'FORBIDDEN_CAPABILITY' }
-        try{
-        assertApprovedForExecution(input.token)
-
-        }catch{
-           return { success: false, error: 'FORBIDDEN_CAPABILITY' }
-        }
-      
-      // 2. Idempotency check:
-      //    Build cache key `${input.ownerId}:${input.idempotencyKey}`.
-      //    If this.idempotencyReceipts has this key, return
-      //    { success: true, settlement: existingReceipt }
-      const cacheKey=`${input.ownerId}:${input.idempotencyKey}`;
-      if(this.idempotencyReceipts.has(cacheKey)){
-        const existingReceipt=this.idempotencyReceipts.get(cacheKey)!;
-        return { success: true, settlement: existingReceipt }
+      // 1. Verify the capability token: anything not minted by the gate is forbidden.
+      try {
+        assertApprovedForExecution(input.token);
+      } catch {
+        return { success: false, error: 'FORBIDDEN_CAPABILITY' };
       }
 
-      //
-      // 3. Balance check:
-      //    Look up current balance from this.accounts.
-      //    If current balance < input.proposal.grandTotalMinor,
-      //    return { success: false, error: 'INSUFFICIENT_FUNDS' }
-      const balance =this.accounts.get(input.ownerId)??0
-      if( balance < input.proposal.grandTotalMinor){
-         return { success: false, error: 'INSUFFICIENT_FUNDS' }
-
+      // 2. Idempotency: an already-settled key returns the original receipt.
+      const cacheKey = `${input.ownerId}:${input.idempotencyKey}`;
+      const existing = this.idempotencyReceipts.get(cacheKey);
+      if (existing !== undefined) {
+        return { success: true, settlement: existing };
       }
-      //
-      // 4. Atomic decrement & Receipt creation:
-      //    newBalance = currentBalance - input.proposal.grandTotalMinor
-      //    Save newBalance in this.accounts.
-      //    Create receipt with randomUUID(), settledAt ISO string, etc.
-      //    Store in this.idempotencyReceipts.
-      //    Return { success: true, settlement: receipt }
-      // =============================================================
-     const  newBalance=balance - input.proposal.grandTotalMinor;
-     this.accounts.set(input.ownerId,newBalance)
-     const receipt:SettlementReceipt={
-      settlementId:randomUUID(),
-      ownerId:input.ownerId,
-      invoiceId:input.proposal.invoiceId,
-      amountMinor:input.proposal.grandTotalMinor,
-      remainingBalanceMinor:newBalance,
-      settledAt:new Date().toISOString(),
-      status:'SETTLED'
 
-     }
-     this.idempotencyReceipts.set(cacheKey,receipt)
-    return { success: true, settlement: receipt };
+      // 3. Balance check.
+      const balance = this.accounts.get(input.ownerId) ?? 0;
+      if (balance < input.proposal.grandTotalMinor) {
+        return { success: false, error: 'INSUFFICIENT_FUNDS' };
+      }
 
-
-
-
-      
+      // 4. Atomic decrement + receipt, cached for idempotent replays.
+      const newBalance = balance - input.proposal.grandTotalMinor;
+      this.accounts.set(input.ownerId, newBalance);
+      const receipt: SettlementReceipt = {
+        settlementId: randomUUID(),
+        ownerId: input.ownerId,
+        invoiceId: input.proposal.invoiceId,
+        amountMinor: input.proposal.grandTotalMinor,
+        remainingBalanceMinor: newBalance,
+        settledAt: new Date().toISOString(),
+        status: 'SETTLED',
+      };
+      this.idempotencyReceipts.set(cacheKey, receipt);
+      return { success: true, settlement: receipt };
     } finally {
       releaseLock();
     }
