@@ -3,7 +3,7 @@
 > *The LLM proposes; deterministic financial policies dispose.*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests: 122 Passed](https://img.shields.io/badge/Tests-122%20Passed-brightgreen.svg)](packages/eval)
+[![Tests: 124 Passed](https://img.shields.io/badge/Tests-124%20Passed-brightgreen.svg)](packages/eval)
 [![PayPal API](https://img.shields.io/badge/PayPal-Orders%20v2%20Sandbox-blue.svg)](https://developer.paypal.com)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Zero%20Any-blue.svg)](tsconfig.base.json)
 
@@ -76,12 +76,12 @@ PayGuard decouples the probabilistic language model from the deterministic finan
 
 | Component | Technology | Rationale |
 |---|---|---|
-| **Core API Gateway** | Node.js, Fastify, TypeScript (Strict) | Schema-first serialization, high throughput, zero `any` types. |
+| **Core API Gateway** | Node.js, TypeScript (Strict) | Zero-dependency HTTP boundary (`node:http`), schema-first Zod validation, zero `any` types. |
 | **Payment Platform** | PayPal Orders API v2 Sandbox | Complete OAuth2 token caching, 401 single-refresh, 429 exponential backoff with `Retry-After`. |
-| **AI Layer & LLM** | Google Gemini 2.5/3.x Flash & Groq LPUs | Fast-lane ReAct tool loop (capped at 4 rounds) with Zod tool validation. |
-| **Command Center UI** | Next.js 14, TailwindCSS, AG Grid | High-density financial command center with live status indicators and QR approvals. |
-| **Data Integrity** | PostgreSQL & Redis | Pessimistic locking (`SELECT FOR UPDATE`), sliding-window velocity caps, idempotency keys. |
-| **Testing Harness** | Vitest | 122 automated unit, policy boundary, and adversarial injection tests. |
+| **AI Layer & LLM** | Google Gemini Flash & Groq LPUs | Capped 4-round ReAct tool loop with Zod tool validation and deterministic fixture fallback. |
+| **Command Center UI** | Next.js 15, TailwindCSS | Responsive financial command center with live API status, QR approvals, and policy inspector. |
+| **Data Integrity** | In-Memory Ledger & Eval Harness | Integer-cents arithmetic, idempotency keys, single-use QR nonces, and 18 golden eval cases. |
+| **Testing Harness** | Vitest | 124 automated unit, policy boundary, and adversarial injection tests + 18 golden evals. |
 
 ---
 
@@ -95,26 +95,28 @@ PayGuard decouples the probabilistic language model from the deterministic finan
 
 1. **Clone & Install Dependencies**:
    ```bash
-   git clone https://github.com/shubham107b/PayGuard.git
+   git clone https://github.com/shubhambhattacharya-dev/PayGuard.git
    cd PayGuard
    pnpm install
    ```
 
-2. **Run All 122 Automated Tests**:
+2. **Build & Run All 124 Automated Tests + 18 Golden Evals**:
    ```bash
-   pnpm -r test
+   pnpm build
+   pnpm test
+   pnpm eval
    ```
    *Verifies all contracts, policy boundaries, PayPal OAuth2 retry handlers, and agent runners offline in <30 seconds.*
 
-3. **Start Development Servers**:
+3. **Start Production Servers**:
    ```bash
-   # Start API Gateway (Port 3001)
-   pnpm --filter @payguard/api dev
+   # Terminal 1: Start API Gateway (Port 4000)
+   pnpm --filter @payguard/api start
 
-   # In a separate terminal: Start Web Command Center (Port 3000)
-   pnpm --filter @payguard/web dev
+   # Terminal 2: Start Web Command Center (Port 3000)
+   pnpm --filter @payguard/web start
    ```
-   Open [http://localhost:3000/payments](http://localhost:3000/payments) to view the PayGuard Command Center.
+   Open [http://localhost:3000/payments](http://localhost:3000/payments) to view the PayGuard Command Center. *(Set `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET` in `.env` for live PayPal Sandbox execution, and `GEMINI_API_KEY` / `GROQ_API_KEY` for live LLM proposals.)*
 
 ---
 
@@ -123,18 +125,18 @@ PayGuard decouples the probabilistic language model from the deterministic finan
 PayGuard includes an offline-executable evaluation suite ensuring zero regressions:
 ```text
 ✓ packages/contracts: 69 passing (Zod schemas, ISO-4217, BigInt cents arithmetic)
-✓ apps/api:           49 passing
+✓ apps/api:           51 passing
   ├── modules/agent/runner.spec.ts   (ReAct loop, 4-round cap, injection resilience)
   ├── server-agent.spec.ts           (Agent execution & thought streaming)
-  ├── server.spec.ts                 (QR approvals & prompt-injection detection)
+  ├── server.spec.ts                 (QR TOCTOU re-evaluation & prompt-injection detection)
   ├── modules/paypal/paypal.spec.ts  (OAuth2 caching, 401 refresh, 429 backoff)
   ├── modules/paypal/executor.spec.ts(Branded capability token boundary)
   ├── modules/policy/gate.spec.ts    (Deterministic $100 financial auto-execution boundary)
-  ├── modules/policy/quote-matcher   (Byte-offset quote verification)
+  ├── modules/policy/quote-matcher   (Character-offset quote verification)
   └── modules/ledger/ledger.spec.ts  (Double-entry ledger, concurrency locks)
 ✓ apps/web:            4 passing     (KPI Strip & Policy Inspector components)
 
-Total: 122 tests passing across 13 test suites (100% Green).
+Total: 124 unit/integration tests + 18 golden eval cases passing (100% Green).
 ```
 
 ---
