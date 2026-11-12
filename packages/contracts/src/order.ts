@@ -110,12 +110,8 @@ export type LineItem = z.infer<typeof LineItemSchema>;
 
 /**
  * Order proposal produced by an untrusted AI agent.
- */
-/**
- * 1. Base Object Schema (बिना .superRefine के, ताकि इसे extend किया जा सके)
- */
-/**
- * 1. Base Object Schema (बिना .superRefine के, ताकि इसे extend किया जा सके)
+ *
+ * 1. Base object schema (without superRefine so it can be extended).
  */
 const OrderProposalBaseSchema = z
   .object({
@@ -150,7 +146,8 @@ const OrderProposalBaseSchema = z
   .strict();
 
 /**
- * 2. Reusable Math Validation Function (दोनों schemas के लिए)
+ * 2. Reusable math validation shared by both proposal and record schemas:
+ * the server recomputes every total with integer math and rejects any drift.
  */
 function validateOrderTotals(
   proposal: z.infer<typeof OrderProposalBaseSchema>,
@@ -211,7 +208,7 @@ function validateOrderTotals(
 }
 
 /**
- * 3. OrderProposalSchema: Base पर superRefine लगाओ
+ * 3. OrderProposalSchema: the base schema with totals validation applied.
  */
 export const OrderProposalSchema =
   OrderProposalBaseSchema.superRefine(validateOrderTotals);
@@ -219,7 +216,8 @@ export const OrderProposalSchema =
 export type OrderProposal = z.infer<typeof OrderProposalSchema>;
 
 /**
- * 4. OrderRecordSchema: पहले Base को extend करो, फिर strict और superRefine लगाओ
+ * 4. OrderRecordSchema: base schema extended with persistence fields,
+ * then strict + totals validation.
  */
 export const OrderRecordSchema = OrderProposalBaseSchema.extend({
   id: z.string().uuid(),

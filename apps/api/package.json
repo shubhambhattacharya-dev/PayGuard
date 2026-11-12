@@ -2,10 +2,19 @@
   "name": "@payguard/api",
   "version": "1.0.0",
   "private": true,
-  "description": "Fastify API Gateway & Policy Engine for PayGuard",
+  "description": "PayGuard API Gateway - deterministic policy gate, capped ReAct agent, PayPal sandbox executor",
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
     "test": "vitest run",
     "test:watch": "vitest"
   },

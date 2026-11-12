@@ -30,44 +30,33 @@ export function evaluatePolicy(input: PolicyEvaluationInput): PolicyDecision {
   const expiresAt = input.expiresAt ?? new Date(Date.now() + 15 * 60_000).toISOString();
 
   try {
-    // =============================================================
-    // TODO: SHUBHAM 20% KERNEL (NO CODE HINTS - WRITE FROM SPEC)
-    // =============================================================
-    // Business Requirements (Check in this order):
-     // 1. Duplicate invoice -> Reject
-     if(input.isDuplicateInvoice){
-      return {state:"REJECTED", reasonCode: ReasonCode.REJECT_DUPLICATE_INVOICE, decisionId,
-      evaluatedAt}
-     }
-   
-    // 2. Vendor not in trusted list -> Hold
-   
-    if(!input.trustedVendors.includes(input.proposal.vendorName)){
-      return {state:"HOLD", reasonCode:ReasonCode.HOLD_VENDOR_UNTRUSTED,  decisionId,
-      evaluatedAt}
+    // 1. Duplicate invoice -> Reject (replay protection).
+    if (input.isDuplicateInvoice) {
+      return { state: 'REJECTED', reasonCode: ReasonCode.REJECT_DUPLICATE_INVOICE, decisionId, evaluatedAt };
     }
-    // 3. Order grand total exceeds single-order cap -> Hold
-    if(input.proposal.grandTotalMinor > AUTO_EXECUTE_CAP_MINOR){
-      return {
-        state:"HOLD",reasonCode:ReasonCode.HOLD_OVER_CAP,decisionId,
-      evaluatedAt
-      }
+    // 2. Vendor not in the trusted list -> Hold for review.
+    if (!input.trustedVendors.includes(input.proposal.vendorName)) {
+      return { state: 'HOLD', reasonCode: ReasonCode.HOLD_VENDOR_UNTRUSTED, decisionId, evaluatedAt };
     }
-    // 4. Hourly spent + current order exceeds hourly velocity cap -> Hold
-    if(input.hourlySpentMinor + input.proposal.grandTotalMinor> HOURLY_VELOCITY_CAP_MINOR ){
-      return { state:"HOLD", reasonCode:ReasonCode.HOLD_VELOCITY_LIMIT, decisionId,
-      evaluatedAt}
-
+    // 3. Order grand total above the single-order auto cap -> Hold (HITL).
+    if (input.proposal.grandTotalMinor > AUTO_EXECUTE_CAP_MINOR) {
+      return { state: 'HOLD', reasonCode: ReasonCode.HOLD_OVER_CAP, decisionId, evaluatedAt };
     }
-    // 5. All passed -> Mint capability token and Approve
-
-    const approvedToken=issueApprovedToken({ownerId:input.ownerId,proposal:input.proposal,idempotencyKey:input.idempotencyKey,policyVersion:input.policyVersion,expiresAt})
-    return { state: 'APPROVED', reasonCode: ReasonCode.OK_AUTO, approvedToken: approvedToken, decisionId, evaluatedAt };
-    
-    
-    // ================================= ============================
-
+    // 4. Hourly spend plus this order above the velocity cap -> Hold.
+    if (input.hourlySpentMinor + input.proposal.grandTotalMinor > HOURLY_VELOCITY_CAP_MINOR) {
+      return { state: 'HOLD', reasonCode: ReasonCode.HOLD_VELOCITY_LIMIT, decisionId, evaluatedAt };
+    }
+    // 5. All checks passed -> mint the capability token and approve.
+    const approvedToken = issueApprovedToken({
+      ownerId: input.ownerId,
+      proposal: input.proposal,
+      idempotencyKey: input.idempotencyKey,
+      policyVersion: input.policyVersion,
+      expiresAt,
+    });
+    return { state: 'APPROVED', reasonCode: ReasonCode.OK_AUTO, approvedToken, decisionId, evaluatedAt };
   } catch (_err) {
+    // Fail closed: any unexpected branch collapses to a dependency HOLD.
     return createDependencyHold(decisionId);
   }
 }

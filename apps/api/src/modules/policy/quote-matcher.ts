@@ -28,39 +28,23 @@ export function verifyQuoteGrounding(
   sourceText: string,
   citation: QuoteCitation,
 ): GroundingVerificationResult {
-  // =============================================================
-  // TODO: SHUBHAM 20% KERNEL (NO CODE HINTS - WRITE FROM SPEC)
-  // =============================================================
-  // Business Requirements (Check in this exact order):
-  // 1. Empty quote check -> If citation.exactQuote.trim().length === 0,
-  //    return { isGrounded: false, reason: 'EMPTY_QUOTE' }
-  if(citation.exactQuote.trim().length===0){
-    return {isGrounded:false, reason:'EMPTY_QUOTE' }
-
+  // 1. Empty quote -> fabricated reference.
+  if (citation.exactQuote.trim().length === 0) {
+    return { isGrounded: false, reason: 'EMPTY_QUOTE' };
   }
-  //
-  // 2. Bounds check -> If citation.startOffset < 0 OR
-  //    citation.endOffset > sourceText.length OR
-  //    citation.startOffset >= citation.endOffset,
-  //    return { isGrounded: false, reason: 'OUT_OF_BOUNDS' }
-if(citation.startOffset < 0 || citation.endOffset > sourceText.length ||citation.startOffset >= citation.endOffset){
-  return  { isGrounded: false, reason: 'OUT_OF_BOUNDS' }
-}
-
-  //
-  // 3. Character-offset slice check -> Slice sourceText from startOffset to endOffset.
-  //    If the sliced string !== citation.exactQuote,
-  //    return { isGrounded: false, reason: 'OFFSET_MISMATCH' }
- const acutualSlice=sourceText.slice(citation.startOffset,citation.endOffset)
-  if(acutualSlice !=citation.exactQuote){
-     return { isGrounded: false, reason: 'OFFSET_MISMATCH' }
+  // 2. Bounds check: the claimed span must exist inside the source text.
+  if (
+    citation.startOffset < 0 ||
+    citation.endOffset > sourceText.length ||
+    citation.startOffset >= citation.endOffset
+  ) {
+    return { isGrounded: false, reason: 'OUT_OF_BOUNDS' };
   }
- 
-  //
-  // 4. All passed -> Return { isGrounded: true, verifiedQuote: citation.exactQuote }
-  // =============================================================
-
-    return { isGrounded: true, verifiedQuote: citation.exactQuote }
-
- 
+  // 3. Character-offset slice check: slice(source, start, end) must equal the quote.
+  const actualSlice = sourceText.slice(citation.startOffset, citation.endOffset);
+  if (actualSlice !== citation.exactQuote) {
+    return { isGrounded: false, reason: 'OFFSET_MISMATCH' };
+  }
+  // 4. Grounded: the quote is byte-verified against the deterministic extraction.
+  return { isGrounded: true, verifiedQuote: citation.exactQuote };
 }

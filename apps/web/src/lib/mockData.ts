@@ -154,6 +154,10 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
       vendorVelocityLimit: '$500',
       velocityWindow: '60 min rolling window',
     },
+    qrCode: {
+      singleUseCode: 'PG-4M9A-2B1C',
+      expiresInSeconds: 598,
+    },
   },
   {
     id: 'tx-3',

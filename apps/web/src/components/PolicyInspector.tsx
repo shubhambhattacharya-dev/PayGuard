@@ -13,15 +13,16 @@ import {
 } from 'lucide-react';
 
 interface PolicyInspectorProps {
+  className?: string;
   transaction: Transaction | null;
   onOpenQr: (tx: Transaction) => void;
   onApprove: (tx: Transaction) => void;
 }
 
-export function PolicyInspector({ transaction, onOpenQr, onApprove }: PolicyInspectorProps) {
+export function PolicyInspector({ transaction, onOpenQr, onApprove, className = '' }: PolicyInspectorProps) {
   if (!transaction) {
     return (
-      <div className="w-80 lg:w-96 bg-white border-l border-surface-border p-6 flex flex-col items-center justify-center text-center text-slate-400">
+      <div className={`w-full bg-white border-t 2xl:border-t-0 2xl:border-l border-surface-border p-6 flex flex-col items-center justify-center text-center text-slate-400 ${className}`}>
         <ShieldCheck className="w-8 h-8 text-slate-300 mb-2" />
         <p className="text-xs">Select an invoice to inspect its deterministic policy verification.</p>
       </div>
@@ -29,7 +30,7 @@ export function PolicyInspector({ transaction, onOpenQr, onApprove }: PolicyInsp
   }
 
   return (
-    <aside className="w-80 lg:w-96 bg-white border-l border-surface-border p-5 flex flex-col justify-between overflow-y-auto shrink-0 z-10">
+    <aside className={`w-full bg-white border-t 2xl:border-t-0 2xl:border-l border-surface-border p-4 sm:p-5 flex flex-col justify-between overflow-visible 2xl:overflow-y-auto 2xl:max-h-[calc(100vh-3.5rem)] z-10 ${className}`}>
       <div className="space-y-5">
         {/* Header: Vendor, Amount, Status Badge */}
         <div>
