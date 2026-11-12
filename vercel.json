@@ -1,0 +1,5 @@
+{
+  "buildCommand": "pnpm --filter @payguard/contracts build && pnpm --filter @payguard/web build",
+  "outputDirectory": "apps/web/.next",
+  "framework": "nextjs"
+}
