@@ -6,6 +6,9 @@
 [![Tests: 124 Passed](https://img.shields.io/badge/Tests-124%20Passed-brightgreen.svg)](packages/eval)
 [![PayPal API](https://img.shields.io/badge/PayPal-Orders%20v2%20Sandbox-blue.svg)](https://developer.paypal.com)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Zero%20Any-blue.svg)](tsconfig.base.json)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-Vercel-black.svg)](https://payguard-pied.vercel.app/payments)
+
+> **Live Demo:** [payguard-pied.vercel.app/payments](https://payguard-pied.vercel.app/payments)
 
 ---
 
