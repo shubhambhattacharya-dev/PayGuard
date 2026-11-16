@@ -229,13 +229,34 @@ const CASES: readonly { id: string; name: string; check: Check }[] = [
   {
     id: 'VELOC-01',
     name: 'Velocity: $142 already spent + $64 order breaches the $200/60min window',
-    check: async (server) =>
-      expectDecision(
+    check: async (server) => {
+      // Settle two real $71.00 orders ($142.00 total) so server-side velocity reaches $142.
+      for (const [idx, invId] of ['INV-VEL-PRIOR-1', 'INV-VEL-PRIOR-2'].entries()) {
+        const priorProposal = makeProposal({ invoiceId: invId, quantity: 1, unitPriceMinor: toMoneyMinor(7100) });
+        const priorEval = await server.inject<{ approvalId: string }>({
+          method: 'POST',
+          url: '/v1/evaluate',
+          payload: evaluatePayload(priorProposal, { idempotencyKey: `idem-vel-prior-${idx}` }),
+        });
+        await server.inject({
+          method: 'POST',
+          url: '/v1/execute',
+          payload: {
+            ownerId: 'owner_northstar',
+            proposal: priorProposal,
+            approvalId: priorEval.json().approvalId,
+            idempotencyKey: `idem-vel-prior-${idx}`,
+          },
+        });
+      }
+
+      return expectDecision(
         server,
-        evaluatePayload(makeProposal({ invoiceId: 'INV-VEL-1' }), { hourlySpentMinor: toMoneyMinor(14200) }),
+        evaluatePayload(makeProposal({ invoiceId: 'INV-VEL-1' })),
         'HOLD',
         ReasonCode.HOLD_VELOCITY_LIMIT,
-      ),
+      );
+    },
   },
   {
     id: 'VENDOR-01',
@@ -264,13 +285,31 @@ const CASES: readonly { id: string; name: string; check: Check }[] = [
   {
     id: 'DUP-01',
     name: 'Duplicate invoice replay is rejected',
-    check: async (server) =>
-      expectDecision(
+    check: async (server) => {
+      const dupProposal = makeProposal({ invoiceId: 'INV-DUP-01' });
+      const firstEval = await server.inject<{ approvalId: string }>({
+        method: 'POST',
+        url: '/v1/evaluate',
+        payload: evaluatePayload(dupProposal, { idempotencyKey: 'idem-dup-first' }),
+      });
+      await server.inject({
+        method: 'POST',
+        url: '/v1/execute',
+        payload: {
+          ownerId: 'owner_northstar',
+          proposal: dupProposal,
+          approvalId: firstEval.json().approvalId,
+          idempotencyKey: 'idem-dup-first',
+        },
+      });
+
+      return expectDecision(
         server,
-        evaluatePayload(makeProposal({}), { isDuplicateInvoice: true }),
+        evaluatePayload(dupProposal, { idempotencyKey: 'idem-dup-replay' }),
         'REJECTED',
         ReasonCode.REJECT_DUPLICATE_INVOICE,
-      ),
+      );
+    },
   },
 
   // --- Human-in-the-loop QR approvals ---
