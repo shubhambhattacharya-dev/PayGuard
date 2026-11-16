@@ -11,6 +11,21 @@ jobs:
     name: Lint, Typecheck & Test Suite
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: payguard
+          POSTGRES_PASSWORD: payguard_ci_password
+          POSTGRES_DB: payguard_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U payguard -d payguard_db"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -33,6 +48,8 @@ jobs:
         run: pnpm run build
 
       - name: Run Vitest Unit & Invariant Tests
+        env:
+          DATABASE_URL: postgres://payguard:payguard_ci_password@127.0.0.1:5432/payguard_db
         run: pnpm run test
 
       - name: Run Golden Eval Harness (18 adversarial cases)
