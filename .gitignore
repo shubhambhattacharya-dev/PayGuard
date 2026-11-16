@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .next/
+.next-e2e/
 out/
 .turbo/
 *.tsbuildinfo
@@ -9,5 +10,6 @@ out/
 .env.*.local
 *.log
 coverage/
+test-results/
 .DS_Store
 Thumbs.db

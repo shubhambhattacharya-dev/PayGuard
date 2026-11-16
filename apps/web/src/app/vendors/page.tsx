@@ -30,29 +30,31 @@ export default function VendorsPage() {
       subtitle="Owner-controlled trusted vendor allowlist enforced by the deterministic policy gate."
     >
       {error && (
-        <div className="mb-4 p-3 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-800">{error}</div>
+        <div className="mb-4 p-3 rounded-lg bg-[rgba(255,123,130,0.12)] border border-[rgba(255,123,130,0.3)] text-xs text-[#ff959a]">
+          {error}
+        </div>
       )}
 
-      <div className="bg-white rounded-xl border border-surface-border shadow-sm overflow-x-auto">
+      <div className="bg-[#111b17] rounded-xl border border-[rgba(222,242,227,0.12)] overflow-x-auto">
         <div className="min-w-[540px]">
-          <div className="grid grid-cols-12 gap-3 px-5 py-3 border-b border-surface-border text-[11px] font-medium text-slate-500 uppercase tracking-wider">
+          <div className="grid grid-cols-12 gap-3 px-5 py-3 border-b border-[rgba(222,242,227,0.12)] bg-[#101914] text-[11px] font-medium text-[#9aa9a0] uppercase tracking-wider">
             <div className="col-span-5">Vendor</div>
             <div className="col-span-3">Trust Status</div>
             <div className="col-span-2">Ledger Rows</div>
             <div className="col-span-2 text-right">Settled Total</div>
           </div>
-          <div className="divide-y divide-surface-border">
+          <div className="divide-y divide-[rgba(222,242,227,0.08)]">
             {vendors.map((v) => (
-              <div key={v.name} className="grid grid-cols-12 gap-3 px-5 py-3.5 items-center text-xs">
-                <div className="col-span-5 font-semibold text-slate-900">{v.name}</div>
+              <div key={v.name} className="grid grid-cols-12 gap-3 px-5 py-3.5 items-center text-xs hover:bg-[#15211b] transition-colors">
+                <div className="col-span-5 font-semibold text-[#eaf0eb]">{v.name}</div>
                 <div className="col-span-3">
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-medium">
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[rgba(40,187,131,0.14)] text-[#84e5b3] border border-[rgba(40,187,131,0.3)] text-[11px] font-medium">
                     <ShieldCheck className="w-3 h-3" />
                     Trusted Allowlist
                   </span>
                 </div>
-                <div className="col-span-2 font-mono text-slate-600">{v.transactionCount}</div>
-                <div className="col-span-2 text-right font-mono font-medium text-slate-900">
+                <div className="col-span-2 font-mono text-[#9aa9a0]">{v.transactionCount}</div>
+                <div className="col-span-2 text-right font-mono font-medium text-[#eaf0eb] tabular-nums">
                   ${(v.settledMinor / 100).toFixed(2)}
                 </div>
               </div>

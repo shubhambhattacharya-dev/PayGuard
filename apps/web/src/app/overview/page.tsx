@@ -54,64 +54,64 @@ export default function OverviewPage() {
       <KpiStrip transactions={transactions} />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-        <div className="p-5 rounded-xl border border-surface-border bg-white shadow-sm">
+        <div className="p-5 rounded-xl border border-[rgba(222,242,227,0.12)] bg-[#111b17]">
           <div className="flex items-center gap-2 mb-3">
-            <Server className="w-4 h-4 text-emerald-600" />
-            <h2 className="text-sm font-semibold text-slate-900">API & Rail Posture</h2>
+            <Server className="w-4 h-4 text-[#c8f169]" />
+            <h2 className="text-sm font-semibold text-[#eaf0eb]">API & Rail Posture</h2>
           </div>
           <dl className="space-y-2 text-xs">
             <div className="flex justify-between">
-              <dt className="text-slate-500">Gateway status</dt>
-              <dd className="font-mono font-medium text-slate-900">{health ? 'ONLINE (200 OK)' : 'OFFLINE'}</dd>
+              <dt className="text-[#9aa9a0]">Gateway status</dt>
+              <dd className="font-mono font-medium text-[#eaf0eb]">{health ? 'ONLINE (200 OK)' : 'OFFLINE'}</dd>
             </div>
             <div className="flex justify-between">
-              <dt className="text-slate-500">PayPal Sandbox executor</dt>
-              <dd className="font-mono font-medium text-slate-900">
+              <dt className="text-[#9aa9a0]">PayPal Sandbox executor</dt>
+              <dd className="font-mono font-medium text-[#eaf0eb]">
                 {health ? (health.paypalSandboxReady ? 'CONNECTED' : 'NOT CONFIGURED') : 'UNKNOWN'}
               </dd>
             </div>
             <div className="flex justify-between">
-              <dt className="text-slate-500">Execution mode</dt>
-              <dd className="font-mono font-medium text-slate-900">{health?.executionMode ?? 'offline_demo'}</dd>
+              <dt className="text-[#9aa9a0]">Execution mode</dt>
+              <dd className="font-mono font-medium text-[#eaf0eb]">{health?.executionMode ?? 'offline_demo'}</dd>
             </div>
           </dl>
         </div>
 
-        <div className="p-5 rounded-xl border border-surface-border bg-white shadow-sm">
+        <div className="p-5 rounded-xl border border-[rgba(222,242,227,0.12)] bg-[#111b17]">
           <div className="flex items-center gap-2 mb-3">
-            <Lock className="w-4 h-4 text-sky-600" />
-            <h2 className="text-sm font-semibold text-slate-900">Deterministic Policy Caps</h2>
+            <Lock className="w-4 h-4 text-[#c8f169]" />
+            <h2 className="text-sm font-semibold text-[#eaf0eb]">Deterministic Policy Caps</h2>
           </div>
           <dl className="space-y-2 text-xs">
             <div className="flex justify-between">
-              <dt className="text-slate-500">Single-order auto-execute cap</dt>
-              <dd className="font-mono font-semibold text-slate-900">$100.00 (10,000 cents)</dd>
+              <dt className="text-[#9aa9a0]">Single-order auto-execute cap</dt>
+              <dd className="font-mono font-semibold text-[#eaf0eb]">$100.00 (10,000 cents)</dd>
             </div>
             <div className="flex justify-between">
-              <dt className="text-slate-500">Rolling 60-min velocity cap</dt>
-              <dd className="font-mono font-semibold text-slate-900">$200.00 (20,000 cents)</dd>
+              <dt className="text-[#9aa9a0]">Rolling 60-min velocity cap</dt>
+              <dd className="font-mono font-semibold text-[#eaf0eb]">$200.00 (20,000 cents)</dd>
             </div>
             <div className="flex justify-between">
-              <dt className="text-slate-500">Capability token law</dt>
-              <dd className="font-mono text-emerald-700">Branded ApprovedForExecution</dd>
+              <dt className="text-[#9aa9a0]">Capability token law</dt>
+              <dd className="font-mono text-[#c8f169]">Branded ApprovedForExecution</dd>
             </div>
           </dl>
         </div>
       </div>
 
-      <div className="p-5 rounded-xl border border-surface-border bg-white shadow-sm flex items-center justify-between">
+      <div className="p-5 rounded-xl border border-[rgba(222,242,227,0.12)] bg-[#111b17] flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <ShieldCheck className="w-5 h-5 text-emerald-600" />
+          <ShieldCheck className="w-5 h-5 text-[#c8f169]" />
           <div>
-            <div className="text-sm font-semibold text-slate-900">Ready to inspect or approve payments?</div>
-            <div className="text-xs text-slate-500">
+            <div className="text-sm font-semibold text-[#eaf0eb]">Ready to inspect or approve payments?</div>
+            <div className="text-xs text-[#9aa9a0]">
               Review held invoices, run the capped ReAct agent, or authorize single-use QR approvals.
             </div>
           </div>
         </div>
         <Link
           href="/payments"
-          className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-medium transition-colors"
+          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#c8f169] hover:bg-[#d6f68d] text-[#10170d] text-xs font-bold transition-colors"
         >
           <span>Open Payments Ledger</span>
           <ArrowRight className="w-3.5 h-3.5" />

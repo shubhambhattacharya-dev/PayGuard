@@ -65,6 +65,7 @@ export function createPayPalClient(
             'Content-Type': 'application/x-www-form-urlencoded',
           },
           body: 'grant_type=client_credentials',
+          signal: AbortSignal.timeout(15_000),
         });
 
         if (!tokenRes.ok) {
@@ -112,7 +113,7 @@ export function createPayPalClient(
       let lastStatus = 500;
 
       for (let attempt = 0; attempt < 3; attempt++) {
-        let res = await fetchFn(url, reqInit);
+        let res = await fetchFn(url, { ...reqInit, signal: AbortSignal.timeout(15_000) });
         lastStatus = res.status;
 
         if (res.ok) {
@@ -139,6 +140,7 @@ export function createPayPalClient(
               'Content-Type': 'application/x-www-form-urlencoded',
             },
             body: 'grant_type=client_credentials',
+            signal: AbortSignal.timeout(15_000),
           });
 
           if (!refreshRes.ok) {
@@ -184,7 +186,12 @@ export function createPayPalClient(
         if (res.status === 429 || res.status >= 500) {
           if (attempt < 2) {
             const retryAfterHeader = res.headers.get('Retry-After');
-            const delayMs = retryAfterHeader ? Number(retryAfterHeader) * 1000 : Math.pow(2, attempt) * 1000;
+            const parsedSeconds = retryAfterHeader ? Number(retryAfterHeader.trim()) : Number.NaN;
+            const backoffMs = Math.pow(2, attempt) * 1000;
+            const delayMs =
+              Number.isFinite(parsedSeconds) && parsedSeconds >= 0
+                ? Math.min(parsedSeconds * 1000, 30_000)
+                : backoffMs;
             await sleepFn(delayMs);
             continue;
           }

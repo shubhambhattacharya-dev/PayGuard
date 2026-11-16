@@ -1,24 +1,39 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { CheckCircle2, X, ChevronDown } from 'lucide-react';
+import { CheckCircle2, PanelLeftOpen, X } from 'lucide-react';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? (typeof window !== 'undefined' ? '' : 'http://localhost:4000');
 
 interface HeaderProps {
   toastMessage?: string | null | undefined;
   onDismissToast?: (() => void) | undefined;
+  sidebarCollapsed?: boolean | undefined;
+  onToggleSidebar?: (() => void) | undefined;
 }
 
-export function Header({ toastMessage, onDismissToast }: HeaderProps) {
+export function Header({
+  toastMessage,
+  onDismissToast,
+  sidebarCollapsed = false,
+  onToggleSidebar,
+}: HeaderProps) {
   const [railState, setRailState] = useState<'checking' | 'sandbox' | 'simulated' | 'offline'>('checking');
+  const [latencyMs, setLatencyMs] = useState<number | null>(null);
+  const todayLabel = new Date().toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
 
   useEffect(() => {
     let cancelled = false;
+    const started = performance.now();
     fetch(`${API_URL}/healthz`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data: { paypalSandboxReady?: boolean } | null) => {
         if (cancelled) return;
+        setLatencyMs(Math.max(1, Math.round(performance.now() - started)));
         if (!data) {
           setRailState('offline');
         } else {
@@ -43,26 +58,42 @@ export function Header({ toastMessage, onDismissToast }: HeaderProps) {
           : { dot: 'bg-slate-400 animate-pulse', label: 'Checking API...' };
 
   return (
-    <header className="min-h-14 bg-white border-b border-surface-border px-4 sm:px-6 md:px-8 py-2 flex flex-wrap items-center justify-between gap-2 sticky top-0 z-20">
-      {/* Left: Date & Sandbox Status */}
-      <div className="flex items-center gap-6">
-        <span className="text-xs font-medium text-slate-500">Nov 1, 2026</span>
-        <div className="flex items-center gap-2 text-xs font-medium text-slate-700 bg-surface-subtle px-2.5 py-1 rounded-md border border-surface-border">
+    <header className="min-h-14 bg-[#0b1210]/90 backdrop-blur-md border-b border-[rgba(222,242,227,0.12)] px-4 sm:px-6 md:px-8 py-2 flex flex-wrap items-center justify-between gap-2 sticky top-0 z-20">
+      {/* Left: Sidebar Toggle, Date & Sandbox Status */}
+      <div className="flex items-center gap-3 sm:gap-5">
+        {onToggleSidebar && sidebarCollapsed && (
+          <button
+            type="button"
+            onClick={onToggleSidebar}
+            className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-[rgba(222,242,227,0.16)] bg-[#111b17] hover:border-[#c8f169] text-xs font-medium text-[#eaf0eb] transition-colors"
+            aria-label="Show sidebar"
+            title="Show sidebar"
+          >
+            <PanelLeftOpen className="w-3.5 h-3.5 text-[#c8f169]" />
+            <span>Menu</span>
+          </button>
+        )}
+        <span className="text-xs font-medium text-[#9aa9a0] font-mono">{todayLabel}</span>
+        <div className="flex items-center gap-2 text-xs font-medium text-[#dce5de] bg-[#111b17] px-2.5 py-1 rounded-md border border-[rgba(222,242,227,0.12)]">
           <span className={`w-2 h-2 rounded-full ${badge.dot}`}></span>
           <span>{badge.label}</span>
-          <ChevronDown className="w-3 h-3 text-slate-400" />
+          {latencyMs !== null && railState !== 'offline' && (
+            <span className="text-[11px] font-mono text-[#9aa9a0] pl-1 border-l border-[rgba(222,242,227,0.12)]">
+              {latencyMs}ms
+            </span>
+          )}
         </div>
       </div>
 
-      {/* Right: TOCTOU Verification Toast (only shown after real gate re-evaluation) */}
+      {/* Right: TOCTOU Verification Toast */}
       {toastMessage && (
-        <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs px-3 py-1.5 rounded-lg shadow-sm animate-fade-in">
-          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+        <div className="flex items-center gap-2 bg-[rgba(40,187,131,0.14)] border border-[rgba(40,187,131,0.3)] text-[#84e5b3] text-xs px-3 py-1.5 rounded-lg shadow-sm">
+          <CheckCircle2 className="w-4 h-4 text-[#84e5b3] shrink-0" />
           <span className="font-medium">{toastMessage}</span>
           {onDismissToast && (
             <button
               onClick={onDismissToast}
-              className="ml-2 text-emerald-600 hover:text-emerald-900 rounded p-0.5"
+              className="ml-2 text-[#84e5b3] hover:text-white rounded p-0.5"
               aria-label="Dismiss notification"
             >
               <X className="w-3.5 h-3.5" />

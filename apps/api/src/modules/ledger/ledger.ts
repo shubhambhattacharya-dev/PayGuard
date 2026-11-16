@@ -29,7 +29,13 @@ export interface SettleOrderInput {
   readonly idempotencyKey: string;
 }
 
-export class InMemoryLedger {
+export interface LedgerStore {
+  seedAccount(ownerId: string, initialBalanceMinor: number): void | Promise<void>;
+  getBalance(ownerId: string): number | Promise<number>;
+  settleOrder(input: SettleOrderInput): Promise<SettlementResult>;
+}
+
+export class InMemoryLedger implements LedgerStore {
   private readonly accounts = new Map<string, number>();
   private readonly idempotencyReceipts = new Map<string, SettlementReceipt>();
   // Mutex lock map to prevent race conditions on parallel requests for the same owner
@@ -65,6 +71,14 @@ export class InMemoryLedger {
       // 1. Verify the capability token: anything not minted by the gate is forbidden.
       try {
         assertApprovedForExecution(input.token);
+        if (
+          input.token.ownerId !== input.ownerId ||
+          input.token.idempotencyKey !== input.idempotencyKey ||
+          input.token.authorizedTotalMinor !== input.proposal.grandTotalMinor ||
+          input.token.proposal.invoiceId !== input.proposal.invoiceId
+        ) {
+          return { success: false, error: 'FORBIDDEN_CAPABILITY' };
+        }
       } catch {
         return { success: false, error: 'FORBIDDEN_CAPABILITY' };
       }

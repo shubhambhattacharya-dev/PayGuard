@@ -28,55 +28,55 @@ export function LedgerGrid({
   const getStatusBadge = (status: Transaction['status']) => {
     switch (status) {
       case 'Review required':
-        return 'bg-amber-50 text-amber-700 border-amber-200';
+        return 'bg-[rgba(255,184,107,0.14)] text-[#ffc477] border-[rgba(255,184,107,0.3)]';
       case 'Paid':
-        return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+        return 'bg-[rgba(40,187,131,0.14)] text-[#84e5b3] border-[rgba(40,187,131,0.3)]';
       case 'On hold':
-        return 'bg-rose-50 text-rose-700 border-rose-200';
+        return 'bg-[rgba(255,123,130,0.12)] text-[#ff959a] border-[rgba(255,123,130,0.28)]';
       case 'Blocked':
-        return 'bg-rose-100/70 text-rose-800 border-rose-200';
+        return 'bg-[rgba(255,123,130,0.18)] text-[#ff8f97] border-[rgba(255,123,130,0.35)]';
       default:
-        return 'bg-slate-100 text-slate-700 border-slate-200';
+        return 'bg-[#15211b] text-[#9aa9a0] border-[rgba(222,242,227,0.14)]';
     }
   };
 
   const getPolicyCodeBadge = (code: Transaction['policyCode']) => {
     switch (code) {
       case 'AUTO_EXECUTED':
-        return 'bg-emerald-50/60 text-emerald-800 border-emerald-200/60';
+        return 'bg-[rgba(40,187,131,0.12)] text-[#84e5b3] border-[rgba(40,187,131,0.25)]';
       case 'HOLD_OVER_CAP':
-        return 'bg-slate-100 text-slate-700 border-slate-200';
+        return 'bg-[#15211b] text-[#b8c4bb] border-[rgba(222,242,227,0.14)]';
       case 'HOLD_VENDOR_DESTINATION':
       case 'HOLD_VENDOR_UNTRUSTED':
-        return 'bg-slate-100 text-slate-700 border-slate-200';
+        return 'bg-[#15211b] text-[#b8c4bb] border-[rgba(222,242,227,0.14)]';
       case 'REJECT_PROMPT_INJECTION':
       case 'REJECT_UNCATALOGUED_SKU':
       case 'REJECT_MATH_MISMATCH':
-        return 'bg-rose-50 text-rose-700 border-rose-200';
+        return 'bg-[rgba(255,123,130,0.12)] text-[#ff959a] border-[rgba(255,123,130,0.28)]';
     }
   };
 
   return (
-    <div className="bg-white rounded-xl border border-surface-border overflow-x-auto shadow-sm">
-      <div className="divide-y divide-surface-border md:hidden">
+    <div className="bg-[#111b17] rounded-xl border border-[rgba(222,242,227,0.12)] overflow-x-auto">
+      <div className="divide-y divide-[rgba(222,242,227,0.08)] md:hidden">
         {transactions.map((tx) => {
           const isSelected = tx.id === selectedTxId;
           const isExpanded = expandedTxIds.has(tx.id);
 
           return (
-            <article key={tx.id} className={`p-4 ${isSelected ? 'bg-forest-50/70' : ''}`}>
+            <article key={tx.id} className={`p-4 ${isSelected ? 'bg-[#1c3428]/70' : ''}`}>
               <button
                 type="button"
                 onClick={() => onSelectTx(tx)}
-                className="w-full min-w-0 text-left rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-forest-600"
+                className="w-full min-w-0 text-left rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c8f169]"
               >
                 <span className="flex items-start justify-between gap-3">
                   <span className="min-w-0">
-                    <span className="block truncate text-sm font-semibold text-slate-900">{tx.vendor}</span>
-                    <span className="mt-1 block font-mono text-xs text-slate-500">{tx.invoiceNumber}</span>
+                    <span className="block truncate text-sm font-semibold text-[#eaf0eb]">{tx.vendor}</span>
+                    <span className="mt-1 block font-mono text-xs text-[#9aa9a0]">{tx.invoiceNumber}</span>
                   </span>
                   <span className="shrink-0 text-right">
-                    <span className="block text-sm font-semibold text-slate-900">{tx.amountFormatted}</span>
+                    <span className="block text-sm font-semibold text-[#eaf0eb]">{tx.amountFormatted}</span>
                     <span className={`mt-1 inline-block rounded border px-2 py-0.5 text-[11px] font-medium ${getStatusBadge(tx.status)}`}>
                       {tx.status}
                     </span>
@@ -147,7 +147,7 @@ export function LedgerGrid({
 
       <div className="hidden min-w-[760px] md:block">
         {/* Table Header */}
-        <div className="grid grid-cols-12 gap-3 px-5 py-3 border-b border-surface-border bg-white text-[11px] font-medium text-slate-500 uppercase tracking-wider select-none">
+        <div className="grid grid-cols-12 gap-3 px-5 py-3 border-b border-[rgba(222,242,227,0.12)] bg-[#101914] text-[11px] font-medium text-[#9aa9a0] uppercase tracking-wider select-none">
           <div className="col-span-3">Vendor</div>
           <div className="col-span-2">Invoice #</div>
           <div className="col-span-1">Amount</div>
@@ -157,7 +157,7 @@ export function LedgerGrid({
         </div>
 
         {/* Rows */}
-        <div className="divide-y divide-surface-border">
+        <div className="divide-y divide-[rgba(222,242,227,0.08)]">
           {transactions.map((tx) => {
             const isSelected = tx.id === selectedTxId;
             const isExpanded = expandedTxIds.has(tx.id);
@@ -168,7 +168,7 @@ export function LedgerGrid({
                 <div
                   onClick={() => onSelectTx(tx)}
                   className={`grid grid-cols-12 gap-3 px-5 py-3.5 items-center text-xs cursor-pointer ${
-                    isSelected ? 'bg-forest-50/70' : 'hover:bg-slate-50/70'
+                    isSelected ? 'bg-[#1c3428]/70' : 'hover:bg-[#15211b]'
                   }`}
                 >
                   {/* Vendor Column with Expand Caret */}
@@ -178,19 +178,19 @@ export function LedgerGrid({
                         e.stopPropagation();
                         onToggleExpand(tx.id);
                       }}
-                      className="p-1 hover:bg-slate-200/60 rounded text-slate-400 hover:text-slate-700"
+                      className="p-1 hover:bg-[#1c3428] rounded text-[#6e7d74] hover:text-[#c8f169]"
                       aria-label={isExpanded ? 'Collapse row' : 'Expand row'}
                     >
                       {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                     </button>
-                    <span className="font-semibold text-slate-900 truncate">{tx.vendor}</span>
+                    <span className="font-semibold text-[#eaf0eb] truncate">{tx.vendor}</span>
                   </div>
 
                   {/* Invoice # */}
-                  <div className="col-span-2 font-mono text-slate-600">{tx.invoiceNumber}</div>
+                  <div className="col-span-2 font-mono text-[#9aa9a0]">{tx.invoiceNumber}</div>
 
                   {/* Amount */}
-                  <div className="col-span-1 font-medium text-slate-900">{tx.amountFormatted}</div>
+                  <div className="col-span-1 font-medium text-[#eaf0eb]">{tx.amountFormatted}</div>
 
                   {/* Status Pill */}
                   <div className="col-span-2">
@@ -246,14 +246,14 @@ export function LedgerGrid({
 
                 {/* Master-Detail Expanded Reasoning Drawer (Agent reasoning 4 rounds) */}
                 {isExpanded && tx.reasoningSteps.length > 0 && (
-                  <div className="bg-surface-subtle/80 px-12 py-4 border-t border-surface-border animate-fade-in">
-                    <div className="text-xs font-semibold text-slate-800 mb-3">Agent reasoning (4 rounds)</div>
+                  <div className="bg-[#0e1713] px-12 py-4 border-t border-[rgba(222,242,227,0.08)]">
+                    <div className="text-xs font-semibold text-[#eaf0eb] mb-3">Agent reasoning (4 rounds)</div>
                     <div className="space-y-2.5">
                       {tx.reasoningSteps.map((step) => {
                         const badgeColor =
                           step.round === 4 && tx.status === 'Review required'
-                            ? 'bg-amber-100 text-amber-800 border-amber-300'
-                            : 'bg-emerald-100 text-emerald-800 border-emerald-300';
+                            ? 'bg-[rgba(255,184,107,0.14)] text-[#ffc477] border-[rgba(255,184,107,0.3)]'
+                            : 'bg-[rgba(40,187,131,0.14)] text-[#84e5b3] border-[rgba(40,187,131,0.3)]';
 
                         return (
                           <div key={step.round} className="flex items-start gap-4 text-xs">
@@ -263,8 +263,8 @@ export function LedgerGrid({
                               R{step.round}
                             </span>
                             <div className="flex-1">
-                              <span className="font-semibold text-slate-900 mr-2 font-mono">{step.name}</span>
-                              <span className="text-slate-600">{step.summary}</span>
+                              <span className="font-semibold text-[#c8f169] mr-2 font-mono">{step.name}</span>
+                              <span className="text-[#9aa9a0]">{step.summary}</span>
                             </div>
                           </div>
                         );

@@ -5,14 +5,13 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   ShieldCheck,
-  Building2,
   LayoutDashboard,
   CheckCircle2,
   CreditCard,
   CheckSquare,
   Users2,
   History,
-  ChevronDown,
+  PanelLeftClose,
   LucideIcon,
 } from 'lucide-react';
 
@@ -24,44 +23,50 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { name: 'Overview', href: '/overview', icon: LayoutDashboard },
-  { name: 'Evaluations', href: '/evaluations', icon: CheckCircle2 },
   { name: 'Payments', href: '/payments', icon: CreditCard },
   { name: 'Approvals', href: '/approvals', icon: CheckSquare },
+  { name: 'Evaluations', href: '/evaluations', icon: CheckCircle2 },
   { name: 'Vendors', href: '/vendors', icon: Users2 },
   { name: 'Audit trail', href: '/audit', icon: History },
 ];
 
-export function Sidebar() {
+interface SidebarProps {
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
+}
+
+export function Sidebar({ collapsed = false, onToggleCollapse }: SidebarProps = {}) {
   const pathname = usePathname();
 
   return (
-    <aside className="w-full bg-forest-900 text-white flex flex-col md:w-64 md:h-screen md:fixed md:left-0 md:top-0 select-none z-30">
-      {/* Top Branding & Workspace */}
+    <aside
+      className={`w-full bg-[#101915] text-[#eaf0eb] border-b md:border-b-0 md:border-r border-[rgba(222,242,227,0.12)] flex flex-col justify-between md:w-56 md:h-screen md:fixed md:left-0 md:top-0 select-none z-30 transition-transform duration-200 ease-out ${collapsed ? 'md:-translate-x-full' : 'md:translate-x-0'
+        }`}
+    >
       <div>
-        {/* Brand */}
-        <div className="px-4 py-3 sm:px-5 md:p-5 flex items-center gap-3 border-b border-forest-850">
-          <div className="w-9 h-9 rounded-lg bg-emerald-600/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
-            <ShieldCheck className="w-5 h-5" />
-          </div>
-          <div>
-            <div className="font-semibold text-sm leading-tight text-white tracking-tight">PayGuard</div>
-            <div className="text-xs text-emerald-400 font-medium">Payments</div>
-          </div>
-        </div>
-
-        {/* Workspace Selector */}
-        <div className="px-3 pt-2 md:pt-3">
-          <button className="w-full flex items-center justify-between p-2.5 rounded-lg bg-forest-850/60 hover:bg-forest-850 border border-forest-800/80 text-left transition-colors">
-            <div className="flex items-center gap-2.5">
-              <Building2 className="w-4 h-4 text-emerald-400" />
-              <span className="text-xs font-medium text-slate-100">Northstar Finance</span>
+        {/* Minimal Brand Anchor */}
+        <div className="px-4 h-14 flex items-center justify-between border-b border-[rgba(222,242,227,0.12)]">
+          <Link href="/" className="flex items-center gap-2.5">
+            <div className="w-7 h-7 rounded-lg bg-[rgba(200,241,105,0.1)] border border-[rgba(200,241,105,0.35)] flex items-center justify-center text-[#c8f169]">
+              <ShieldCheck className="w-4 h-4" />
             </div>
-            <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
-          </button>
+            <span className="font-bold text-sm tracking-tight text-[#eaf0eb]">PayGuard</span>
+          </Link>
+          {onToggleCollapse && (
+            <button
+              type="button"
+              onClick={onToggleCollapse}
+              className="hidden md:inline-flex p-1.5 rounded-md text-[#84938a] hover:text-[#c8f169] hover:bg-[#15211b] transition-colors"
+              aria-label="Hide sidebar"
+              title="Hide sidebar"
+            >
+              <PanelLeftClose className="w-4 h-4" />
+            </button>
+          )}
         </div>
 
-        {/* Navigation Links */}
-        <nav aria-label="Primary navigation" className="flex gap-1 overflow-x-auto px-3 py-2 md:block md:space-y-1 md:overflow-visible md:pt-5">
+        {/* Clean, Uncluttered Navigation */}
+        <nav aria-label="Primary navigation" className="flex gap-1 overflow-x-auto px-2.5 py-2.5 md:block md:space-y-0.5 md:overflow-visible md:py-4">
           {NAV_ITEMS.map((item) => {
             const isActive = pathname.startsWith(item.href) || (item.href === '/payments' && pathname === '/');
             const Icon = item.icon;
@@ -70,13 +75,12 @@ export function Sidebar() {
               <Link
                 key={item.name}
                 href={item.href}
-                className={`flex shrink-0 items-center gap-2 md:gap-3 px-3 py-2.5 md:px-3.5 rounded-lg text-xs font-medium transition-colors ${
-                  isActive
-                    ? 'bg-forest-800 text-white border-l-2 border-emerald-400 shadow-sm'
-                    : 'text-slate-300 hover:text-white hover:bg-forest-850/50'
-                }`}
+                className={`flex shrink-0 items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] transition-colors ${isActive
+                  ? 'bg-[#1c3428] text-[#eaf0eb] font-semibold'
+                  : 'text-[#9aa9a0] font-medium hover:text-[#eaf0eb] hover:bg-[#15211b]'
+                  }`}
               >
-                <Icon className={`w-4 h-4 ${isActive ? 'text-emerald-400' : 'text-slate-400'}`} />
+                <Icon className={`w-4 h-4 ${isActive ? 'text-[#c8f169]' : 'text-[#6e7d74]'}`} />
                 <span>{item.name}</span>
               </Link>
             );
@@ -84,20 +88,28 @@ export function Sidebar() {
         </nav>
       </div>
 
-      {/* User Avatar at Bottom */}
-      <div className="hidden md:block p-3 border-t border-forest-850">
-        <button className="w-full flex items-center justify-between p-2 rounded-lg hover:bg-forest-850/60 transition-colors">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-full bg-forest-700 border border-forest-600 flex items-center justify-center text-xs font-semibold text-emerald-200">
-              JD
-            </div>
-            <div className="text-left">
-              <div className="text-xs font-medium text-slate-100 leading-tight">Jordan Diaz</div>
-              <div className="text-[11px] text-slate-400">Finance Admin</div>
-            </div>
+      {/* Bottom Policy Guardrails Summary + Landing Link */}
+      <div className="hidden md:block p-3 space-y-2.5 border-t border-[rgba(222,242,227,0.12)]">
+        <div className="p-3 rounded-lg bg-[#15211b] border border-[rgba(222,242,227,0.1)] space-y-2 text-[11px]">
+          <div className="flex items-center justify-between text-[#9aa9a0]">
+            <span>Auto-execute cap</span>
+            <span className="font-mono font-semibold text-[#eaf0eb]">$100.00</span>
           </div>
-          <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
-        </button>
+          <div className="flex items-center justify-between text-[#9aa9a0]">
+            <span>Velocity (60m)</span>
+            <span className="font-mono font-semibold text-[#eaf0eb]">$200.00</span>
+          </div>
+          <div className="flex items-center justify-between text-[#9aa9a0]">
+            <span>Gate version</span>
+            <span className="font-mono text-[#c8f169]">v2026.11</span>
+          </div>
+        </div>
+        <Link
+          href="/"
+          className="block text-center py-1.5 rounded-md border border-[rgba(222,242,227,0.12)] text-[11px] font-medium text-[#9aa9a0] hover:text-[#c8f169] hover:border-[rgba(200,241,105,0.3)] transition-colors"
+        >
+          ← Back to landing page
+        </Link>
       </div>
     </aside>
   );

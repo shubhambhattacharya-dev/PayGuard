@@ -6,31 +6,64 @@
 @import 'ag-grid-community/styles/ag-theme-quartz.css';
 
 :root {
-  --foreground-rgb: 24, 30, 27;
-  --background-start-rgb: 248, 249, 248;
-  --background-end-rgb: 248, 249, 248;
+  --foreground-rgb: 234, 240, 235;
+  --background-start-rgb: 11, 18, 16;
+  --background-end-rgb: 11, 18, 16;
+}
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 84px;
 }
 
 body {
-  color: rgb(var(--foreground-rgb));
-  background: #f8f9f8;
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  color: #eaf0eb;
+  background: #0b1210;
+  font-family: var(--font-sans), 'Manrope', system-ui, -apple-system, sans-serif;
+  font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
 }
 
-/* Custom AG Grid Quartz styling to match PayGuard Enterprise aesthetic */
+*:focus-visible {
+  outline: 2px solid #c8f169;
+  outline-offset: 2px;
+}
+
+/* Crisp dark shimmer skeleton (Instagram-style, reduced-motion safe) */
+@keyframes pgShimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.pg-skeleton {
+  background-image: linear-gradient(90deg, #15211b 25%, #1e3127 50%, #15211b 75%);
+  background-size: 200% 100%;
+  animation: pgShimmer 1.5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto !important;
+  }
+  .pg-skeleton {
+    animation: none;
+  }
+}
+
+/* Custom AG Grid Quartz Dark styling matching PayGuard Obsidian Forest */
 .ag-theme-quartz {
-  --ag-background-color: #ffffff;
-  --ag-header-background-color: #ffffff;
-  --ag-header-foreground-color: #68726e;
-  --ag-header-cell-hover-background-color: #f8f9f8;
-  --ag-header-cell-moving-background-color: #f1f4f2;
-  --ag-border-color: #e6e9e7;
-  --ag-row-border-color: #f1f4f2;
-  --ag-row-hover-color: #f8faf9;
-  --ag-selected-row-background-color: #f0f7f3;
+  --ag-background-color: #111b17;
+  --ag-foreground-color: #eaf0eb;
+  --ag-header-background-color: #101914;
+  --ag-header-foreground-color: #9aa9a0;
+  --ag-header-cell-hover-background-color: #15211b;
+  --ag-header-cell-moving-background-color: #1c3428;
+  --ag-border-color: rgba(222, 242, 227, 0.12);
+  --ag-row-border-color: rgba(222, 242, 227, 0.07);
+  --ag-row-hover-color: #15211b;
+  --ag-selected-row-background-color: #1c3428;
   --ag-font-size: 13px;
-  --ag-font-family: 'Inter', system-ui, sans-serif;
+  --ag-font-family: var(--font-sans), 'Manrope', system-ui, sans-serif;
   --ag-cell-horizontal-padding: 16px;
   --ag-row-height: 52px;
   --ag-header-height: 44px;
@@ -41,7 +74,7 @@ body {
   text-transform: uppercase;
   font-size: 11px;
   letter-spacing: 0.05em;
-  color: #68726e;
+  color: #9aa9a0;
 }
 
 /* Cell change flash animation */

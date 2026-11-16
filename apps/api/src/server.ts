@@ -11,7 +11,7 @@ import {
 } from '@payguard/contracts';
 import { evaluatePolicy } from './modules/policy/gate.js';
 import { verifyQuoteGrounding, type QuoteCitation } from './modules/policy/quote-matcher.js';
-import { InMemoryLedger, type SettlementResult } from './modules/ledger/ledger.js';
+import { InMemoryLedger, LedgerStore, type SettlementResult } from './modules/ledger/ledger.js';
 import {
   runAgentLoop,
   createProviderChatFn,
@@ -22,6 +22,13 @@ import {
 } from './modules/agent/runner.js';
 import { createCatalog, type CatalogStore } from './modules/agent/catalog.js';
 import type { PayPalExecutor, PayPalExecutionResult } from './modules/paypal/executor.js';
+import {
+  emitStructuredLog,
+  type LangfuseReporter,
+  type TelemetrySpan,
+  type TracePayload,
+} from './modules/observability/telemetry.js';
+
 
 export interface InjectOptions {
   readonly method: 'GET' | 'POST' | 'OPTIONS';
@@ -71,6 +78,7 @@ export interface QrApprovalRecord {
   readonly hourlySpentMinor: number;
   readonly initialReasonCode: string;
   readonly expiresAtMs: number;
+  readonly invoiceText?: string;
   used: boolean;
 }
 
@@ -103,16 +111,21 @@ export interface LedgerTransactionRecord {
 }
 
 const PROMPT_INJECTION_PATTERNS = [
-  /ignore\s+all\s+previous\s+instructions/i,
+  /ignore\s+(all\s+)?previous\s+instructions/i,
+  /forget\s+(all\s+)?(previous\s+)?instructions/i,
   /disregard\s+(all\s+)?(policy|limits|instructions)/i,
+  /bypass\s+(all\s+)?(policy|approval|gate|limits)/i,
+  /override\s+(all\s+)?(policy|limits)/i,
   /system\s+override/i,
   /pre-approved\s+for\s+\$/i,
   /auto-approval\s+limit\s+raised/i,
+  /(BEGIN|END)_VENDOR_DOCUMENT/i,
 ];
 
 export function detectPromptInjection(text: string): string | null {
+  const normalized = text.normalize('NFKC').replace(/[\u200B-\u200D\uFEFF]/g, '');
   for (const pattern of PROMPT_INJECTION_PATTERNS) {
-    const match = text.match(pattern);
+    const match = normalized.match(pattern);
     if (match) {
       return match[0];
     }
@@ -125,7 +138,8 @@ export interface BuildServerOptions {
    * PayPal rail behind the policy gate. When omitted, /v1/execute settles the
    * in-memory ledger and returns a simulated sandbox reference (offline demo).
    */
-  readonly paypalExecutor?: PayPalExecutor;
+  paypalExecutor?: PayPalExecutor;
+  readonly ledger?: LedgerStore
   /**
    * Agent chat function. `undefined` = auto (Gemini -> Groq from env keys);
    * `null` = no model available, agent route fails closed to HOLD;
@@ -134,6 +148,11 @@ export interface BuildServerOptions {
   readonly agentChat?: AgentChatFn | null;
   readonly agentProvider?: ProviderName;
   readonly catalog?: CatalogStore;
+  readonly corsOrigin?: string;
+  readonly rateLimitPerMinute?: number;
+  readonly readinessCheck?: () => Promise<boolean>;
+  readonly langfuse?: LangfuseReporter | null;
+  readonly enableStructuredLogs?: boolean;
 }
 
 export interface AgentRunRequestPayload {
@@ -145,7 +164,7 @@ export interface AgentRunRequestPayload {
 }
 
 export interface PayGuardServer {
-  readonly ledger: InMemoryLedger;
+  readonly ledger: LedgerStore;
   readonly capabilityVault: Map<string, ApprovedForExecution>;
   readonly qrApprovals: Map<string, QrApprovalRecord>;
   inject<T = unknown>(options: InjectOptions): Promise<InjectResponse<T>>;
@@ -153,13 +172,67 @@ export interface PayGuardServer {
 }
 
 export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: BuildServerOptions = {}): PayGuardServer {
-  const ledger = new InMemoryLedger();
-  ledger.seedAccount('owner_northstar', initialSeedBalanceMinor);
-  ledger.seedAccount('owner_1', initialSeedBalanceMinor);
+  const ledger = serverOptions.ledger ?? new InMemoryLedger();
+  if (!serverOptions.ledger) {
+    ledger.seedAccount('owner_northstar', initialSeedBalanceMinor);
+    ledger.seedAccount('owner_1', initialSeedBalanceMinor);
+
+  }
+
 
   const capabilityVault = new Map<string, ApprovedForExecution>();
   const qrApprovals = new Map<string, QrApprovalRecord>();
-  const settledInvoices = new Set<string>(['INV-3155']);
+  const inFlightQrCodes = new Set<string>();
+  const settledExecutionEnvelopes = new Map<string, Record<string, unknown>>();
+  const recentSettlements: Array<{ ownerId: string; amountMinor: number; settledAtMs: number }> = [];
+  const getHourlySpentMinor = (ownerId: string): number => {
+    const cutoffMs = Date.now() - 60 * 60_000;
+    while (recentSettlements.length > 0 && recentSettlements[0]!.settledAtMs < cutoffMs) {
+      recentSettlements.shift();
+    }
+    return recentSettlements
+      .filter((entry) => entry.ownerId === ownerId && entry.settledAtMs >= cutoffMs)
+      .reduce((sum, entry) => sum + entry.amountMinor, 0);
+  };
+  const recordSettlementVelocity = (ownerId: string, amountMinor: number): void => {
+    recentSettlements.push({ ownerId, amountMinor, settledAtMs: Date.now() });
+  };
+  const rateLimitHits = new Map<string, number[]>();
+  const rateLimitPerMinute = serverOptions.rateLimitPerMinute ?? 60;
+  const checkRateLimit = (key: string): number | null => {
+    const now = Date.now();
+    const cutoff = now - 60_000;
+    const hits = (rateLimitHits.get(key) ?? []).filter((ts) => ts >= cutoff);
+    if (hits.length >= rateLimitPerMinute) {
+      const retryAfterSec = Math.max(1, Math.ceil((hits[0]! + 60_000 - now) / 1000));
+      rateLimitHits.set(key, hits);
+      return retryAfterSec;
+    }
+    hits.push(now);
+    rateLimitHits.set(key, hits);
+    return null;
+  };
+  const pruneInMemoryStores = (): void => {
+    const now = Date.now();
+    for (const [code, rec] of qrApprovals.entries()) {
+      if (now >= rec.expiresAtMs + 60 * 60_000) {
+        qrApprovals.delete(code);
+      }
+    }
+    for (const [id, tok] of capabilityVault.entries()) {
+      if (Date.parse(tok.expiresAt) <= now) {
+        capabilityVault.delete(id);
+      }
+    }
+    if (auditEvents.length > 500) {
+      auditEvents.length = 500;
+    }
+    if (settledExecutionEnvelopes.size > 500) {
+      const oldestKey = settledExecutionEnvelopes.keys().next().value;
+      if (oldestKey) settledExecutionEnvelopes.delete(oldestKey);
+    }
+  };
+  const settledInvoices = new Set<string>(['INV-3150']);
   const auditEvents: AuditEvent[] = [
     {
       id: 'evt-seed-1',
@@ -190,7 +263,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       timestamp: '2026-11-01T09:30:00.000Z',
       action: 'EXECUTE',
       actor: 'policy-gate',
-      invoiceId: 'INV-3155',
+      invoiceId: 'INV-3150',
       vendor: 'Cedar Supply',
       amountMinor: 6400,
       decisionState: 'APPROVED',
@@ -207,6 +280,13 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
     'Bluebird Logistics',
     'Acme Cloud Corp',
   ];
+  const defaultTrustedVendorAccounts: Record<string, string> = {
+    'Aster Cloud': 'ACCT-ASTER-01',
+    'Lumen Office': 'ACCT-LUMEN-01',
+    'Cedar Supply': 'ACCT-CEDAR-01',
+    'Bluebird Logistics': 'ACCT-BLUEBIRD-01',
+    'Acme Cloud Corp': 'ACCT-ACME-01',
+  };
 
   const makeSeedProposal = (
     invoiceId: string,
@@ -263,14 +343,14 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
     {
       id: 'tx-3',
       vendor: 'Cedar Supply',
-      invoiceNumber: 'INV-3155',
+      invoiceNumber: 'INV-3150',
       amountFormatted: '$64.00',
       amountMinor: 6400,
       status: 'Paid',
       policyCode: 'AUTO_EXECUTED',
       dateFormatted: 'Nov 1, 2026',
       canApproveReject: false,
-      proposal: makeSeedProposal('INV-3155', 'Cedar Supply', 'CED-PPR-01', 'Office Paper Reams', 6400),
+      proposal: makeSeedProposal('INV-3150', 'Cedar Supply', 'CED-PPR-01', 'Office Paper Reams', 6400),
     },
     {
       id: 'tx-4',
@@ -341,18 +421,89 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
   }
 
   async function handleRequest(options: InjectOptions): Promise<InjectResponse> {
-    const corsHeaders: Record<string, string> = {
-      'content-type': 'application/json; charset=utf-8',
-      'access-control-allow-origin': '*',
-      'access-control-allow-methods': 'GET, POST, OPTIONS',
-      'access-control-allow-headers': 'content-type, authorization, x-idempotency-key',
+    pruneInMemoryStores();
+    const reqStartMs = performance.now();
+    const reqStartIso = new Date().toISOString();
+    const traceId = options.headers?.['x-request-id']?.trim() || randomUUID();
+    const metrics: {
+      ownerId?: string;
+      llmMs?: number;
+      dbMs?: number;
+      paypalMs?: number;
+      decisionState?: string;
+      reasonCode?: string;
+      spans: TelemetrySpan[];
+    } = { spans: [] };
+
+    const recordSpan = async <T>(
+      name: string,
+      fn: () => Promise<T>,
+      onDone?: (durationMs: number) => void,
+    ): Promise<T> => {
+      const startMs = performance.now();
+      const startTime = new Date().toISOString();
+      try {
+        return await fn();
+      } finally {
+        const durationMs = Math.round((performance.now() - startMs) * 100) / 100;
+        const endTime = new Date().toISOString();
+        metrics.spans.push({ name, startTime, endTime, durationMs });
+        onDone?.(durationMs);
+      }
     };
 
-    const reply = (statusCode: number, data: unknown): InjectResponse => {
+    const allowedOrigin = serverOptions.corsOrigin ?? process.env.CORS_ORIGIN ?? '*';
+    const corsHeaders: Record<string, string> = {
+      'content-type': 'application/json; charset=utf-8',
+      'access-control-allow-origin': allowedOrigin,
+      ...(allowedOrigin !== '*' ? { vary: 'Origin' } : {}),
+      'access-control-allow-methods': 'GET, POST, OPTIONS',
+      'access-control-allow-headers': 'content-type, authorization, x-idempotency-key, x-request-id',
+    };
+
+    const reply = (statusCode: number, data: unknown, extraHeaders?: Record<string, string>): InjectResponse => {
+      const totalMs = Math.round((performance.now() - reqStartMs) * 100) / 100;
+      const trace: TracePayload = {
+        traceId,
+        name: `${options.method} ${options.url}`,
+        startTime: reqStartIso,
+        endTime: new Date().toISOString(),
+        totalMs,
+        statusCode,
+        method: options.method,
+        path: options.url,
+        ...(metrics.ownerId ? { ownerId: metrics.ownerId } : {}),
+        ...(metrics.llmMs !== undefined ? { llmMs: metrics.llmMs } : {}),
+        ...(metrics.dbMs !== undefined ? { dbMs: metrics.dbMs } : {}),
+        ...(metrics.paypalMs !== undefined ? { paypalMs: metrics.paypalMs } : {}),
+        ...(metrics.decisionState ? { decisionState: metrics.decisionState } : {}),
+        ...(metrics.reasonCode ? { reasonCode: metrics.reasonCode } : {}),
+        spans: metrics.spans,
+      };
+
+      const shouldLog = serverOptions.enableStructuredLogs ?? (process.env.NODE_ENV !== 'test' && !process.env.VITEST);
+      if (shouldLog) {
+        emitStructuredLog(trace);
+      }
+      if (
+        serverOptions.langfuse &&
+        options.method !== 'OPTIONS' &&
+        options.url !== '/healthz' &&
+        options.url !== '/health' &&
+        options.url !== '/readyz'
+      ) {
+        serverOptions.langfuse.emitTrace(trace);
+      }
+
       const body = JSON.stringify(data);
       return {
         statusCode,
-        headers: corsHeaders,
+        headers: {
+          ...corsHeaders,
+          'x-request-id': traceId,
+          'x-response-time-ms': String(totalMs),
+          ...(extraHeaders ?? {}),
+        },
         body,
         json: <T>() => JSON.parse(body) as T,
       };
@@ -362,7 +513,16 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       return reply(204, {});
     }
 
-    // 1. Health Check Route
+    // 1. Health & Readiness Routes
+    if (options.method === 'GET' && options.url === '/readyz') {
+      const ready = serverOptions.readinessCheck ? await serverOptions.readinessCheck() : true;
+      return reply(ready ? 200 : 503, {
+        status: ready ? 'ready' : 'not_ready',
+        service: '@payguard/api',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
     if (options.method === 'GET' && (options.url === '/healthz' || options.url === '/health')) {
       const paypalSandboxReady = Boolean(serverOptions.paypalExecutor);
       return reply(200, {
@@ -432,26 +592,31 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         }
       }
 
-      // 2c. Vendor Payout Destination Change Check (UI Inspector Gap #3)
-      if (
-        body.vendorDestination &&
-        body.vendorDestination.trustedAccount !== body.vendorDestination.invoiceAccount
-      ) {
-        const decisionId = randomUUID();
-        return reply(200, {
-          decision: {
-            state: 'HOLD',
-            reasonCode: ReasonCode.HOLD_VENDOR_DESTINATION,
-            decisionId,
-            evaluatedAt: new Date().toISOString(),
-          },
-          vendorDestination: body.vendorDestination,
-        });
+      // 2c. Vendor Payout Destination Change Check (server-authoritative account when known)
+      if (body.vendorDestination) {
+        const expectedTrustedAccount =
+          defaultTrustedVendorAccounts[proposal.vendorName] ?? body.vendorDestination.trustedAccount;
+        if (expectedTrustedAccount !== body.vendorDestination.invoiceAccount) {
+          const decisionId = randomUUID();
+          return reply(200, {
+            decision: {
+              state: 'HOLD',
+              reasonCode: ReasonCode.HOLD_VENDOR_DESTINATION,
+              decisionId,
+              evaluatedAt: new Date().toISOString(),
+            },
+            vendorDestination: {
+              trustedAccount: expectedTrustedAccount,
+              invoiceAccount: body.vendorDestination.invoiceAccount,
+            },
+          });
+        }
       }
 
-      const trustedVendors = body.trustedVendors ?? defaultTrustedVendors;
-      const isDuplicateInvoice = body.isDuplicateInvoice ?? false;
-      const hourlySpentMinor = body.hourlySpentMinor ?? 0;
+      // Server-authoritative policy inputs (never trust client-supplied overrides).
+      const trustedVendors = defaultTrustedVendors;
+      const isDuplicateInvoice = settledInvoices.has(proposal.invoiceId);
+      const hourlySpentMinor = getHourlySpentMinor(ownerId);
 
       // 2d. Deterministic Policy Gate (Ticket #1 Kernel)
       const decision: PolicyDecision = evaluatePolicy({
@@ -497,6 +662,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
           hourlySpentMinor,
           initialReasonCode: decision.reasonCode,
           expiresAtMs: Date.now() + 10 * 60_000,
+          ...(typeof body.invoiceText === 'string' ? { invoiceText: body.invoiceText } : {}),
           used: false,
         });
         return reply(200, {
@@ -514,6 +680,10 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
     // 3. Financial Ledger Execution Route (Ticket #3 Kernel)
     if (options.method === 'POST' && options.url === '/v1/execute') {
       const body = (options.payload ?? {}) as Partial<ExecuteRequestPayload>;
+      const retryAfterSec = checkRateLimit(`execute:${body.ownerId ?? 'anon'}`);
+      if (retryAfterSec !== null) {
+        return reply(429, { success: false, error: 'RATE_LIMITED', retryAfterSeconds: retryAfterSec }, { 'retry-after': String(retryAfterSec) });
+      }
       const parsedProposal = OrderProposalSchema.safeParse(body.proposal);
 
       if (!parsedProposal.success || !body.ownerId || !body.idempotencyKey) {
@@ -527,19 +697,35 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         body.token ??
         (body.approvalId ? capabilityVault.get(body.approvalId) : undefined);
 
-      const result: SettlementResult = await ledger.settleOrder({
-        ownerId: body.ownerId,
-        proposal: parsedProposal.data,
-        token: token as ApprovedForExecution,
-        idempotencyKey: body.idempotencyKey,
-      });
+      const execOwnerId = body.ownerId;
+      const execIdempotencyKey = body.idempotencyKey;
+      metrics.ownerId = execOwnerId;
+      const result: SettlementResult = await recordSpan(
+        'ledger.settleOrder',
+        () =>
+          ledger.settleOrder({
+            ownerId: execOwnerId,
+            proposal: parsedProposal.data,
+            token: token as ApprovedForExecution,
+            idempotencyKey: execIdempotencyKey,
+          }),
+        (ms) => {
+          metrics.dbMs = (metrics.dbMs ?? 0) + ms;
+        },
+      );
 
       if (!result.success) {
         const statusCode = result.error === 'FORBIDDEN_CAPABILITY' ? 403 : 422;
         return reply(statusCode, result);
       }
 
+      const cachedEnvelope = settledExecutionEnvelopes.get(result.settlement.settlementId);
+      if (cachedEnvelope) {
+        return reply(200, { ...cachedEnvelope, replayed: true });
+      }
+
       settledInvoices.add(parsedProposal.data.invoiceId);
+      recordSettlementVelocity(body.ownerId, Number(parsedProposal.data.grandTotalMinor));
       auditEvents.unshift({
         id: `evt-${randomUUID().slice(0, 8)}`,
         timestamp: new Date().toISOString(),
@@ -554,37 +740,60 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       });
 
       // Ledger settled. Now move money on the configured rail (if any).
+      let responseEnvelope: Record<string, unknown>;
       if (serverOptions.paypalExecutor) {
-        const paypal: PayPalExecutionResult = await serverOptions.paypalExecutor.execute(token as ApprovedForExecution);
+        const paypal: PayPalExecutionResult = await recordSpan(
+          'paypal.execute',
+          () => serverOptions.paypalExecutor!.execute(token as ApprovedForExecution),
+          (ms) => {
+            metrics.paypalMs = (metrics.paypalMs ?? 0) + ms;
+          },
+        );
         if (paypal.ok) {
-          return reply(200, {
+          responseEnvelope = {
             ...result,
             paypalOrderId: paypal.paypalOrderId,
             paypal: { ok: true, status: paypal.status, captureId: paypal.captureId },
-          });
+          };
+        } else {
+          // Fail visible, never fail open: settlement stands, the rail failure is reported.
+          responseEnvelope = {
+            ...result,
+            paypalOrderId: `PP-SBX-${result.settlement.settlementId.slice(0, 8).toUpperCase()}`,
+            paypal: { ok: false, stage: paypal.stage, errorCode: paypal.errorCode, message: paypal.message },
+          };
         }
-        // Fail visible, never fail open: settlement stands, the rail failure is reported.
-        return reply(200, {
+      } else {
+        responseEnvelope = {
           ...result,
           paypalOrderId: `PP-SBX-${result.settlement.settlementId.slice(0, 8).toUpperCase()}`,
-          paypal: { ok: false, stage: paypal.stage, errorCode: paypal.errorCode, message: paypal.message },
-        });
+        };
       }
 
-      return reply(200, {
-        ...result,
-        paypalOrderId: `PP-SBX-${result.settlement.settlementId.slice(0, 8).toUpperCase()}`,
-      });
+      settledExecutionEnvelopes.set(result.settlement.settlementId, responseEnvelope);
+      return reply(200, responseEnvelope);
     }
 
     // 80% Shell Helper: Re-runs deterministic policy gate (TOCTOU check), mints capability token, and settles
     const settleApprovedQrRecord = async (record: QrApprovalRecord): Promise<InjectResponse> => {
+      if (record.invoiceText) {
+        const injectionMatch = detectPromptInjection(record.invoiceText);
+        if (injectionMatch) {
+          return reply(422, {
+            success: false,
+            gateReRan: true,
+            error: ReasonCode.REJECT_PROMPT_INJECTION,
+            toastMessage: `Gate re-ran: rejected (${ReasonCode.REJECT_PROMPT_INJECTION})`,
+          });
+        }
+      }
+
       const reEval = evaluatePolicy({
         ownerId: record.ownerId,
         proposal: record.proposal,
         trustedVendors: record.trustedVendors,
         isDuplicateInvoice: settledInvoices.has(record.proposal.invoiceId),
-        hourlySpentMinor: record.hourlySpentMinor,
+        hourlySpentMinor: Math.max(record.hourlySpentMinor, getHourlySpentMinor(record.ownerId)),
         policyVersion: record.policyVersion,
         idempotencyKey: record.idempotencyKey,
       });
@@ -637,12 +846,12 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         reEval.state === 'APPROVED'
           ? reEval.approvedToken
           : issueApprovedToken({
-              ownerId: record.ownerId,
-              proposal: record.proposal,
-              idempotencyKey: record.idempotencyKey,
-              policyVersion: record.policyVersion,
-              expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
-            });
+            ownerId: record.ownerId,
+            proposal: record.proposal,
+            idempotencyKey: record.idempotencyKey,
+            policyVersion: record.policyVersion,
+            expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+          });
 
       capabilityVault.set(freshToken.approvalId, freshToken);
 
@@ -658,6 +867,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       }
 
       settledInvoices.add(record.proposal.invoiceId);
+      recordSettlementVelocity(record.ownerId, Number(record.proposal.grandTotalMinor));
 
       let paypalOrderId = `PP-SBX-${settlementResult.settlement.settlementId.slice(0, 8).toUpperCase()}`;
       let paypalPayload: Record<string, unknown> | undefined;
@@ -717,17 +927,25 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       if (!approvalRecord) {
         return reply(404, { success: false, error: 'QR_CODE_NOT_FOUND' });
       }
-      // 2. Replay protection: consumed code -> 409 Conflict.
-      if (approvalRecord.used) {
+      // 2. Replay protection: consumed or in-flight code -> 409 Conflict.
+      if (approvalRecord.used || inFlightQrCodes.has(body.singleUseCode)) {
         return reply(409, { success: false, error: 'QR_CODE_ALREADY_USED' });
       }
       // 3. Expiration: past expiry -> 410 Gone.
       if (Date.now() >= approvalRecord.expiresAtMs) {
         return reply(410, { success: false, error: 'QR_CODE_EXPIRED' });
       }
-      // 4. Consume BEFORE settling so concurrent replays cannot double-spend.
-      approvalRecord.used = true;
-      return settleApprovedQrRecord(approvalRecord);
+      // 4. Mark IN_FLIGHT before awaiting settlement; finalize used=true only on 200 so transient 422s don't brick the QR.
+      inFlightQrCodes.add(body.singleUseCode);
+      try {
+        const result = await settleApprovedQrRecord(approvalRecord);
+        if (result.statusCode === 200) {
+          approvalRecord.used = true;
+        }
+        return result;
+      } finally {
+        inFlightQrCodes.delete(body.singleUseCode);
+      }
     }
 
     // 5. Catalog (read-only, owner-controlled data the agent may query).
@@ -739,20 +957,34 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
     // 6. Agent route: the LLM proposes, the deterministic gate disposes.
     if (options.method === 'POST' && options.url === '/v1/agent/run') {
       const body = (options.payload ?? {}) as Partial<AgentRunRequestPayload>;
+      const retryAfterSec = checkRateLimit(`agent:${body.ownerId ?? 'anon'}`);
+      if (retryAfterSec !== null) {
+        return reply(429, { error: 'RATE_LIMITED', retryAfterSeconds: retryAfterSec }, { 'retry-after': String(retryAfterSec) });
+      }
       const ownerId = body.ownerId;
       const invoiceText = typeof body.invoiceText === 'string' ? body.invoiceText : '';
       const goal = typeof body.goal === 'string' && body.goal.trim().length > 0 ? body.goal.trim() : 'Pay this vendor invoice.';
       const idempotencyKey = body.idempotencyKey ?? `agent_${randomUUID().slice(0, 8)}`;
       const policyVersion = 'v2026.11';
 
-      if (!ownerId || invoiceText.trim().length === 0) {
-        return reply(400, { error: 'INVALID_AGENT_PAYLOAD', detail: 'ownerId and invoiceText are required.' });
+      const MAX_INVOICE_TEXT_CHARS = 16_000;
+      const MAX_GOAL_CHARS = 500;
+      if (
+        !ownerId ||
+        invoiceText.trim().length === 0 ||
+        invoiceText.length > MAX_INVOICE_TEXT_CHARS ||
+        goal.length > MAX_GOAL_CHARS
+      ) {
+        return reply(400, {
+          error: 'INVALID_AGENT_PAYLOAD',
+          detail: 'ownerId and bounded invoiceText (<= 16000 chars) / goal (<= 500 chars) are required.',
+        });
       }
 
       const thoughts: { round: number; tool: string | null; summary: string }[] = [];
 
-      // 6a. Untrusted prompt-injection scan FIRST - injected text never reaches policy.
-      const injectionMatch = detectPromptInjection(invoiceText);
+      // 6a. Untrusted prompt-injection scan FIRST - injected text (invoice or goal) never reaches policy.
+      const injectionMatch = detectPromptInjection(invoiceText) ?? detectPromptInjection(goal);
       if (injectionMatch) {
         return reply(200, {
           decision: {
@@ -805,7 +1037,14 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         });
       }
 
-      const run: AgentRunResult = await runAgentLoop({ goal, invoiceText, chat, catalog });
+      metrics.ownerId = ownerId;
+      const run: AgentRunResult = await recordSpan(
+        `agent.run(${provider})`,
+        () => runAgentLoop({ goal, invoiceText, chat, catalog }),
+        (ms) => {
+          metrics.llmMs = ms;
+        },
+      );
       thoughts.push(...run.thoughts);
 
       if (!run.proposal) {
@@ -833,8 +1072,8 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         ownerId,
         proposal: run.proposal,
         trustedVendors: defaultTrustedVendors,
-        isDuplicateInvoice: false,
-        hourlySpentMinor: 0,
+        isDuplicateInvoice: settledInvoices.has(run.proposal.invoiceId),
+        hourlySpentMinor: getHourlySpentMinor(ownerId),
         policyVersion,
         idempotencyKey,
       });
@@ -865,10 +1104,23 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
           idempotencyKey,
           policyVersion,
           trustedVendors: defaultTrustedVendors,
-          hourlySpentMinor: 0,
+          hourlySpentMinor: getHourlySpentMinor(ownerId),
           initialReasonCode: decision.reasonCode,
           expiresAtMs: Date.now() + 10 * 60_000,
           used: false,
+        });
+        transactions.unshift({
+          id: `tx-${randomUUID().slice(0, 8)}`,
+          vendor: run.proposal.vendorName,
+          invoiceNumber: run.proposal.invoiceId,
+          amountFormatted: `$${(Number(run.proposal.grandTotalMinor) / 100).toFixed(2)}`,
+          amountMinor: Number(run.proposal.grandTotalMinor),
+          status: 'Review required',
+          policyCode: decision.reasonCode,
+          dateFormatted: 'Nov 16, 2026',
+          canApproveReject: true,
+          qrCode,
+          proposal: run.proposal,
         });
         return reply(200, {
           decision,
@@ -894,6 +1146,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       }
 
       settledInvoices.add(run.proposal.invoiceId);
+      recordSettlementVelocity(ownerId, Number(run.proposal.grandTotalMinor));
 
       let paypalOrderId = `PP-SBX-${settlement.settlement.settlementId.slice(0, 8).toUpperCase()}`;
       let paypalPayload: Record<string, unknown> | null = null;
@@ -906,6 +1159,27 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
           paypalPayload = { ok: false, stage: paypal.stage, errorCode: paypal.errorCode, message: paypal.message };
         }
       }
+
+      settledExecutionEnvelopes.set(settlement.settlement.settlementId, {
+        success: true,
+        settlement: settlement.settlement,
+        paypalOrderId,
+        ...(paypalPayload ? { paypal: paypalPayload } : {}),
+      });
+
+      transactions.unshift({
+        id: `tx-${randomUUID().slice(0, 8)}`,
+        vendor: run.proposal.vendorName,
+        invoiceNumber: run.proposal.invoiceId,
+        amountFormatted: `$${(Number(run.proposal.grandTotalMinor) / 100).toFixed(2)}`,
+        amountMinor: Number(run.proposal.grandTotalMinor),
+        status: 'Paid',
+        policyCode: 'AUTO_EXECUTED',
+        dateFormatted: 'Nov 16, 2026',
+        canApproveReject: false,
+        paypalOrderId,
+        proposal: run.proposal,
+      });
 
       return reply(200, {
         decision: toPublicPolicyDecision(decision),
@@ -939,29 +1213,34 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         return reply(409, { success: false, error: 'TRANSACTION_ALREADY_FINALIZED', transaction: tx });
       }
 
-      const reEval = evaluatePolicy({
-        ownerId: 'owner_northstar',
-        proposal: tx.proposal,
-        trustedVendors: defaultTrustedVendors,
-        isDuplicateInvoice: settledInvoices.has(tx.proposal.invoiceId),
-        hourlySpentMinor: 0,
-        policyVersion: 'v2026.11',
-        idempotencyKey: `idem_tx_${tx.id}`,
-      });
+      // Atomically claim the transaction before any await to prevent concurrent double-execution.
+      tx.canApproveReject = false;
 
-      if (reEval.state === 'REJECTED') {
-        return reply(422, {
-          success: false,
-          gateReRan: true,
-          error: reEval.reasonCode,
-          toastMessage: `Gate re-ran: rejected (${reEval.reasonCode})`,
+      let settled = false;
+      try {
+        const reEval = evaluatePolicy({
+          ownerId: 'owner_northstar',
+          proposal: tx.proposal,
+          trustedVendors: defaultTrustedVendors,
+          isDuplicateInvoice: settledInvoices.has(tx.proposal.invoiceId),
+          hourlySpentMinor: getHourlySpentMinor('owner_northstar'),
+          policyVersion: 'v2026.11',
+          idempotencyKey: `idem_tx_${tx.id}`,
         });
-      }
 
-      const freshToken =
-        reEval.state === 'APPROVED'
-          ? reEval.approvedToken
-          : issueApprovedToken({
+        if (reEval.state === 'REJECTED') {
+          return reply(422, {
+            success: false,
+            gateReRan: true,
+            error: reEval.reasonCode,
+            toastMessage: `Gate re-ran: rejected (${reEval.reasonCode})`,
+          });
+        }
+
+        const freshToken =
+          reEval.state === 'APPROVED'
+            ? reEval.approvedToken
+            : issueApprovedToken({
               ownerId: 'owner_northstar',
               proposal: tx.proposal,
               idempotencyKey: `idem_tx_${tx.id}`,
@@ -969,56 +1248,63 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
               expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
             });
 
-      capabilityVault.set(freshToken.approvalId, freshToken);
-      const settlementResult = await ledger.settleOrder({
-        ownerId: 'owner_northstar',
-        proposal: tx.proposal,
-        token: freshToken,
-        idempotencyKey: `idem_tx_${tx.id}`,
-      });
+        capabilityVault.set(freshToken.approvalId, freshToken);
+        const settlementResult = await ledger.settleOrder({
+          ownerId: 'owner_northstar',
+          proposal: tx.proposal,
+          token: freshToken,
+          idempotencyKey: `idem_tx_${tx.id}`,
+        });
 
-      if (!settlementResult.success) {
-        return reply(422, settlementResult);
+        if (!settlementResult.success) {
+          return reply(422, settlementResult);
+        }
+
+        settled = true;
+        settledInvoices.add(tx.proposal.invoiceId);
+        recordSettlementVelocity('owner_northstar', Number(tx.proposal.grandTotalMinor));
+        if (tx.qrCode) {
+          const qrRec = qrApprovals.get(tx.qrCode);
+          if (qrRec) qrRec.used = true;
+        }
+
+        let paypalOrderId = `PP-SBX-${settlementResult.settlement.settlementId.slice(0, 8).toUpperCase()}`;
+        if (serverOptions.paypalExecutor) {
+          const paypal = await serverOptions.paypalExecutor.execute(freshToken);
+          if (paypal.ok) paypalOrderId = paypal.paypalOrderId;
+        }
+
+        tx.status = 'Paid';
+        tx.policyCode = 'AUTO_EXECUTED';
+        tx.canApproveReject = false;
+        tx.paypalOrderId = paypalOrderId;
+
+        auditEvents.unshift({
+          id: `evt-${randomUUID().slice(0, 8)}`,
+          timestamp: new Date().toISOString(),
+          action: 'TX_APPROVE',
+          actor: 'Jordan Diaz (Finance Admin)',
+          invoiceId: tx.invoiceNumber,
+          vendor: tx.vendor,
+          amountMinor: tx.amountMinor,
+          decisionState: 'APPROVED',
+          reasonCode: 'AUTO_EXECUTED',
+          detail: `Approved ${tx.invoiceNumber} after gate re-evaluation; settled (${paypalOrderId}).`,
+        });
+
+        return reply(200, {
+          success: true,
+          gateReRan: true,
+          toastMessage: 'Gate re-ran, decision stood',
+          transaction: tx,
+          settlement: settlementResult.settlement,
+          paypalOrderId,
+        });
+      } finally {
+        if (!settled) {
+          tx.canApproveReject = true;
+        }
       }
-
-      settledInvoices.add(tx.proposal.invoiceId);
-      if (tx.qrCode) {
-        const qrRec = qrApprovals.get(tx.qrCode);
-        if (qrRec) qrRec.used = true;
-      }
-
-      let paypalOrderId = `PP-SBX-${settlementResult.settlement.settlementId.slice(0, 8).toUpperCase()}`;
-      if (serverOptions.paypalExecutor) {
-        const paypal = await serverOptions.paypalExecutor.execute(freshToken);
-        if (paypal.ok) paypalOrderId = paypal.paypalOrderId;
-      }
-
-      tx.status = 'Paid';
-      tx.policyCode = 'AUTO_EXECUTED';
-      tx.canApproveReject = false;
-      tx.paypalOrderId = paypalOrderId;
-
-      auditEvents.unshift({
-        id: `evt-${randomUUID().slice(0, 8)}`,
-        timestamp: new Date().toISOString(),
-        action: 'TX_APPROVE',
-        actor: 'Jordan Diaz (Finance Admin)',
-        invoiceId: tx.invoiceNumber,
-        vendor: tx.vendor,
-        amountMinor: tx.amountMinor,
-        decisionState: 'APPROVED',
-        reasonCode: 'AUTO_EXECUTED',
-        detail: `Approved ${tx.invoiceNumber} after gate re-evaluation; settled (${paypalOrderId}).`,
-      });
-
-      return reply(200, {
-        success: true,
-        gateReRan: true,
-        toastMessage: 'Gate re-ran, decision stood',
-        transaction: tx,
-        settlement: settlementResult.settlement,
-        paypalOrderId,
-      });
     }
 
     const txRejectMatch = options.url.match(/^\/v1\/transactions\/([^/]+)\/reject$/);
@@ -1105,25 +1391,60 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       new Promise((resolve) => {
         const httpServer: Server = createServer(
           (req: IncomingMessage, res: ServerResponse) => {
+            const MAX_BODY_BYTES = 1_048_576; // 1 MiB limit (OWASP API4:2023)
             const chunks: Buffer[] = [];
-            req.on('data', (chunk: Buffer) => chunks.push(chunk));
-            req.on('end', async () => {
-              let payload: unknown = undefined;
-              const raw = Buffer.concat(chunks).toString('utf-8');
-              if (raw.trim().length > 0) {
-                try {
-                  payload = JSON.parse(raw);
-                } catch {
-                  payload = undefined;
-                }
+            let totalBytes = 0;
+            let tooLarge = false;
+
+            req.on('data', (chunk: Buffer) => {
+              if (tooLarge) return;
+              totalBytes += chunk.length;
+              if (totalBytes > MAX_BODY_BYTES) {
+                tooLarge = true;
+                const body = JSON.stringify({ error: 'PAYLOAD_TOO_LARGE' });
+                res.writeHead(413, { 'content-type': 'application/json; charset=utf-8' });
+                res.end(body);
+                req.destroy();
+                return;
               }
+              chunks.push(chunk);
+            });
 
-              const method = (req.method ?? 'GET') as 'GET' | 'POST' | 'OPTIONS';
-              const url = req.url ?? '/';
-              const response = await handleRequest({ method, url, payload });
+            req.on('end', () => {
+              if (tooLarge) return;
+              void (async () => {
+                let payload: unknown = undefined;
+                const raw = Buffer.concat(chunks).toString('utf-8');
+                if (raw.trim().length > 0) {
+                  try {
+                    payload = JSON.parse(raw);
+                  } catch {
+                    res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' });
+                    res.end(JSON.stringify({ error: 'INVALID_JSON' }));
+                    return;
+                  }
+                }
 
-              res.writeHead(response.statusCode, response.headers);
-              res.end(response.body);
+                const method = (req.method ?? 'GET') as 'GET' | 'POST' | 'OPTIONS';
+                const rawUrl = req.url ?? '/';
+                const url = rawUrl.split('?')[0] || '/';
+                const incomingRequestId = req.headers['x-request-id'];
+                const requestId = Array.isArray(incomingRequestId) ? incomingRequestId[0] : incomingRequestId;
+                const response = await handleRequest({
+                  method,
+                  url,
+                  payload,
+                  ...(requestId ? { headers: { 'x-request-id': requestId } } : {}),
+                });
+
+                res.writeHead(response.statusCode, response.headers);
+                res.end(response.body);
+              })().catch(() => {
+                if (!res.headersSent) {
+                  res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' });
+                  res.end(JSON.stringify({ error: 'INTERNAL_SERVER_ERROR' }));
+                }
+              });
             });
           },
         );

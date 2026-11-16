@@ -9,6 +9,7 @@ import { LedgerGrid } from '../../components/LedgerGrid';
 import { PolicyInspector } from '../../components/PolicyInspector';
 import { QrApprovalModal } from '../../components/QrApprovalModal';
 import { KeyboardShortcutsBar } from '../../components/KeyboardShortcutsBar';
+import { LedgerWorkspaceSkeleton } from '../../components/Skeleton';
 import { INITIAL_TRANSACTIONS } from '../../lib/mockData';
 import { PolicyReasonCode, Transaction, TransactionStatus } from '../../lib/types';
 
@@ -16,9 +17,15 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 
 interface ApiTransactionRow {
   id: string;
+  vendor?: string;
+  invoiceNumber?: string;
+  amountFormatted?: string;
+  amountMinor?: number;
   status: TransactionStatus;
   policyCode: PolicyReasonCode;
+  dateFormatted?: string;
   canApproveReject: boolean;
+  qrCode?: string;
 }
 
 export default function PaymentsPage() {
@@ -28,36 +35,69 @@ export default function PaymentsPage() {
   const [qrModalTx, setQrModalTx] = useState<Transaction | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
 
   const selectedTx = transactions.find((t) => t.id === selectedTxId) || null;
 
-  useEffect(() => {
-    let cancelled = false;
-    fetch(`${API_URL}/v1/transactions`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: { transactions?: ApiTransactionRow[] } | null) => {
-        if (cancelled || !data?.transactions) return;
-        const apiById = new Map(data.transactions.map((t) => [t.id, t]));
-        setTransactions((prev) =>
-          prev.map((item) => {
-            const live = apiById.get(item.id);
-            if (!live) return item;
-            return {
-              ...item,
-              status: live.status,
-              policyCode: live.policyCode,
-              canApproveReject: live.canApproveReject,
-            };
-          }),
-        );
-      })
-      .catch(() => {
-        // API offline: keep seeded transactions visible with offline badge in Header
+  const refreshTransactions = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/v1/transactions`, {
+        signal: AbortSignal.timeout(2500),
       });
-    return () => {
-      cancelled = true;
-    };
+      if (!res.ok) return;
+      const data = (await res.json()) as { transactions?: ApiTransactionRow[] } | null;
+      if (!data?.transactions) return;
+      const apiTransactions = data.transactions;
+      const apiById = new Map(apiTransactions.map((t) => [t.id, t]));
+      setTransactions((prev) => {
+        const prevIds = new Set(prev.map((p) => p.id));
+        const updated = prev.map((item) => {
+          const live = apiById.get(item.id);
+          if (!live) return item;
+          return {
+            ...item,
+            status: live.status,
+            policyCode: live.policyCode,
+            canApproveReject: live.canApproveReject,
+          };
+        });
+        const dynamicRows: Transaction[] = apiTransactions
+          .filter((live) => !prevIds.has(live.id) && live.vendor && live.invoiceNumber)
+          .map((live) => ({
+            id: live.id,
+            vendor: live.vendor ?? 'Unknown Vendor',
+            invoiceNumber: live.invoiceNumber ?? live.id,
+            amountFormatted: live.amountFormatted ?? '$0.00',
+            amountMinor: live.amountMinor ?? 0,
+            status: live.status,
+            policyCode: live.policyCode,
+            dateFormatted: live.dateFormatted ?? 'Today',
+            canApproveReject: live.canApproveReject,
+            reasoningSteps: [],
+            policyChecks: [],
+            policyLimits: {
+              autoExecuteCap: '$100.00',
+              vendorVelocitySpent: '$0.00',
+              vendorVelocityLimit: '$1,000.00',
+              velocityWindow: '60m',
+            },
+            ...(live.qrCode
+              ? { qrCode: { singleUseCode: live.qrCode, expiresInSeconds: 600 } }
+              : {}),
+          }));
+        return [...dynamicRows, ...updated];
+      });
+    } catch {
+      // API offline: keep seeded transactions visible with offline badge in Header
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void refreshTransactions();
+  }, [refreshTransactions]);
 
   const handleToggleExpand = (txId: string) => {
     setExpandedTxIds((prev) => {
@@ -158,20 +198,29 @@ export default function PaymentsPage() {
 
   return (
     <div className="min-h-screen bg-surface-canvas flex flex-col md:flex-row">
-      {/* Fixed Left Sidebar (desktop) / Top Nav (mobile) */}
-      <Sidebar />
+      {/* Collapsible Left Sidebar (desktop) / Top Nav (mobile) */}
+      <Sidebar collapsed={sidebarCollapsed} onToggleCollapse={() => setSidebarCollapsed((c) => !c)} />
 
       {/* Main Content Area */}
-      <div className="flex-1 md:ml-64 flex flex-col min-h-screen min-w-0">
-        <Header toastMessage={toastMessage} onDismissToast={() => setToastMessage(null)} />
+      <div
+        className={`flex-1 flex flex-col min-h-screen min-w-0 transition-[margin] duration-200 ease-out ${
+          sidebarCollapsed ? 'md:ml-0' : 'md:ml-56'
+        }`}
+      >
+        <Header
+          toastMessage={toastMessage}
+          onDismissToast={() => setToastMessage(null)}
+          sidebarCollapsed={sidebarCollapsed}
+          onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
+        />
 
         <div className="flex-1 flex flex-col 2xl:flex-row overflow-hidden">
           {/* Center Ledger View */}
           <main className="flex-1 p-4 sm:p-6 md:p-8 pb-20 overflow-y-auto min-w-0">
             {/* Title & Core Architectural Law */}
             <div className="mb-6">
-              <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Payments</h1>
-              <p className="text-xs text-slate-500 font-normal mt-0.5">
+              <h1 className="text-2xl font-bold text-[#eaf0eb] tracking-tight">Payments</h1>
+              <p className="text-xs text-[#9aa9a0] font-normal mt-0.5">
                 LLM proposes; deterministic policy disposes.
               </p>
             </div>
@@ -188,23 +237,29 @@ export default function PaymentsPage() {
               </div>
             )}
 
-            {/* Top KPI Cards */}
-            <KpiStrip transactions={transactions} />
+            {isLoading ? (
+              <LedgerWorkspaceSkeleton />
+            ) : (
+              <>
+                {/* Top KPI Cards */}
+                <KpiStrip transactions={transactions} />
 
-            {/* Live API bridge: capped ReAct agent + deterministic gate */}
-            <LiveGatePanel />
+                {/* Live API bridge: capped ReAct agent + deterministic gate */}
+                <LiveGatePanel onAfterRun={() => void refreshTransactions()} />
 
-            {/* AG Grid Transaction Ledger */}
-            <LedgerGrid
-              transactions={transactions}
-              selectedTxId={selectedTxId}
-              onSelectTx={(tx) => setSelectedTxId(tx.id)}
-              expandedTxIds={expandedTxIds}
-              onToggleExpand={handleToggleExpand}
-              onApprove={(tx) => void handleApprove(tx)}
-              onReject={(tx) => void handleReject(tx)}
-              onOpenQr={(tx) => setQrModalTx(tx)}
-            />
+                {/* AG Grid Transaction Ledger */}
+                <LedgerGrid
+                  transactions={transactions}
+                  selectedTxId={selectedTxId}
+                  onSelectTx={(tx) => setSelectedTxId(tx.id)}
+                  expandedTxIds={expandedTxIds}
+                  onToggleExpand={handleToggleExpand}
+                  onApprove={(tx) => void handleApprove(tx)}
+                  onReject={(tx) => void handleReject(tx)}
+                  onOpenQr={(tx) => setQrModalTx(tx)}
+                />
+              </>
+            )}
           </main>
 
           {/* Right Policy Inspector Drawer */}

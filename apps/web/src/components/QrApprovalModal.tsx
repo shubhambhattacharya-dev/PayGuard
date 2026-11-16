@@ -10,6 +10,8 @@ interface QrApprovalModalProps {
   singleUseCode: string;
   vendorName: string;
   amountFormatted: string;
+  expiresAtMs?: number;
+  expiresInSeconds?: number;
   onApproveSuccess: (toastMessage?: string) => void;
 }
 
@@ -21,15 +23,23 @@ export function QrApprovalModal({
   singleUseCode,
   vendorName,
   amountFormatted,
+  expiresAtMs,
+  expiresInSeconds = 600,
   onApproveSuccess,
 }: QrApprovalModalProps) {
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
-  const [timeLeft, setTimeLeft] = useState(598); // 09:58
+  const [timeLeft, setTimeLeft] = useState(expiresInSeconds);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
+
+    const initialRemaining = expiresAtMs
+      ? Math.max(0, Math.floor((expiresAtMs - Date.now()) / 1000))
+      : expiresInSeconds;
+    setTimeLeft(initialRemaining);
+    setErrorMsg(null);
 
     // Generate real QR code image pointing to the live /approvals page
     const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
@@ -53,12 +63,17 @@ export function QrApprovalModal({
   const seconds = (timeLeft % 60).toString().padStart(2, '0');
 
   return (
-    <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-surface-border relative animate-scale-up">
+    <div className="fixed inset-0 bg-[#0b1210]/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="qr-modal-title"
+        className="bg-[#111b17] rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-[rgba(222,242,227,0.16)] relative text-[#eaf0eb]"
+      >
         {/* Close Button */}
         <button
           onClick={onClose}
-          className="absolute right-4 top-4 text-slate-400 hover:text-slate-600 p-1 rounded-lg"
+          className="absolute right-4 top-4 text-[#9aa9a0] hover:text-[#c8f169] p-1 rounded-lg transition-colors"
           aria-label="Close modal"
         >
           <X className="w-5 h-5" />
@@ -66,50 +81,54 @@ export function QrApprovalModal({
 
         {/* Title */}
         <div className="flex items-center gap-2 mb-1">
-          <ShieldCheck className="w-5 h-5 text-emerald-600" />
-          <h3 className="font-semibold text-sm text-slate-900">One-time mobile approval</h3>
+          <ShieldCheck className="w-5 h-5 text-[#c8f169]" />
+          <h3 id="qr-modal-title" className="font-semibold text-sm text-[#eaf0eb]">
+            One-time mobile approval
+          </h3>
         </div>
-        <p className="text-xs text-slate-500 mb-5">
+        <p className="text-xs text-[#9aa9a0] leading-relaxed mb-5">
           Scan with your phone camera to review and authorize. Full policy gate re-validates at scan time.
         </p>
 
         {/* Invoice Summary Box */}
-        <div className="bg-surface-subtle p-3 rounded-lg flex items-center justify-between mb-4 border border-surface-border">
+        <div className="bg-[#15211b] p-3 rounded-lg flex items-center justify-between mb-4 border border-[rgba(222,242,227,0.12)]">
           <div>
-            <div className="text-xs font-medium text-slate-800">{vendorName}</div>
-            <div className="text-[11px] text-slate-500">Single-use nonce</div>
+            <div className="text-xs font-medium text-[#eaf0eb]">{vendorName}</div>
+            <div className="text-[11px] text-[#9aa9a0]">Single-use nonce</div>
           </div>
-          <div className="text-sm font-semibold text-slate-900">{amountFormatted}</div>
+          <div className="text-sm font-semibold text-[#eaf0eb] tabular-nums">{amountFormatted}</div>
         </div>
 
-        {/* QR Code Container */}
-        <div className="flex flex-col items-center justify-center py-2 mb-4 bg-white rounded-xl border border-dashed border-slate-200">
+        {/* QR Code Container (white scan-pad inside dark frame for reliable camera contrast) */}
+        <div className="flex flex-col items-center justify-center py-4 mb-4 bg-[#15211b] rounded-xl border border-dashed border-[rgba(222,242,227,0.18)]">
           {qrDataUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={qrDataUrl} alt="Approval QR Code" className="w-40 h-40 rounded-lg shadow-sm" />
+            <div className="p-2 bg-white rounded-xl shadow-sm">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={qrDataUrl} alt="Approval QR Code" className="w-36 h-36 rounded-md" />
+            </div>
           ) : (
-            <div className="w-40 h-40 bg-slate-100 animate-pulse rounded-lg flex items-center justify-center text-xs text-slate-400">
+            <div className="w-40 h-40 pg-skeleton rounded-lg flex items-center justify-center text-xs text-[#9aa9a0]">
               Generating QR...
             </div>
           )}
 
           <div className="mt-3 text-center">
-            <span className="font-mono text-xs font-semibold text-slate-800 bg-slate-100 px-2 py-1 rounded">
+            <span className="font-mono text-xs font-semibold text-[#c8f169] bg-[#0b1210] border border-[rgba(200,241,105,0.25)] px-2.5 py-1 rounded">
               {singleUseCode}
             </span>
           </div>
         </div>
 
         {/* Timer */}
-        <div className="flex items-center justify-center gap-1.5 text-xs text-amber-700 font-medium mb-5 bg-amber-50 py-1.5 rounded-lg border border-amber-200/60">
-          <Clock className="w-3.5 h-3.5 text-amber-600" />
+        <div className="flex items-center justify-center gap-1.5 text-xs text-[#ffc477] font-medium mb-5 bg-[rgba(255,184,107,0.12)] py-1.5 rounded-lg border border-[rgba(255,184,107,0.28)] tabular-nums">
+          <Clock className="w-3.5 h-3.5 text-[#ffc477]" />
           <span>
             Expires in {minutes}:{seconds}
           </span>
         </div>
 
         {errorMsg && (
-          <div className="mb-3 p-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs">
+          <div className="mb-3 p-2.5 rounded-lg bg-[rgba(255,123,130,0.12)] border border-[rgba(255,123,130,0.3)] text-[#ff959a] text-xs">
             {errorMsg}
           </div>
         )}
@@ -143,7 +162,7 @@ export function QrApprovalModal({
               setSubmitting(false);
             }
           }}
-          className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-medium text-xs py-2.5 rounded-lg shadow transition-colors"
+          className="w-full flex items-center justify-center gap-2 bg-[#c8f169] hover:bg-[#d6f68d] disabled:opacity-60 text-[#10170d] font-bold text-xs py-2.5 rounded-lg transition-colors"
         >
           <CheckCircle2 className="w-4 h-4" />
           <span>{submitting ? 'Re-running policy gate...' : 'Authorize via /v1/hitl/approve'}</span>

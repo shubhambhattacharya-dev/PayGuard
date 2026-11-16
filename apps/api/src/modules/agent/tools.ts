@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { OrderProposalSchema, toMoneyMinor, type OrderProposal } from '@payguard/contracts';
+import { OrderProposalSchema, roundHalfEven, toMoneyMinor, type OrderProposal } from '@payguard/contracts';
 import type { CatalogStore } from './catalog.js';
 
 // =====================================================
@@ -19,6 +19,7 @@ export const CalculateTotalArgsSchema = z
             sku: z.string().trim().min(1).max(64),
             quantity: z.number().int().positive('Quantity must be at least 1').max(10_000),
             unitPriceMinor: z.number().int().nonnegative('Unit price cannot be negative'),
+            taxBps: z.number().int().min(0).max(10_000).default(0),
           })
           .strict(),
       )
@@ -114,14 +115,14 @@ function zodSummary(error: z.ZodError): string {
 const MAX_SAFE_MONEY = BigInt(Number.MAX_SAFE_INTEGER);
 
 /**
- * Integer money math: tax = roundHalfUp(lineTotal * taxBps / 10000) computed
- * in BigInt so no float ever touches a monetary amount.
+ * Integer money math: tax = roundHalfEven(lineTotal * taxBps / 10000) computed
+ * in BigInt so it matches OrderProposalSchema's Banker's Rounding.
  */
 function taxMinorFor(lineTotalMinor: bigint, taxBps: number): bigint {
   if (taxBps === 0) {
     return 0n;
   }
-  return (lineTotalMinor * BigInt(taxBps) + 5000n) / 10000n;
+  return roundHalfEven(lineTotalMinor * BigInt(taxBps), 10_000n);
 }
 
 function buildProposalFromDraft(
@@ -203,10 +204,14 @@ export function dispatchToolCall(call: ParsedToolCall | null, catalog: CatalogSt
       if (!parsed.success) {
         return observationError('calculate_total', 'Invalid calculate_total arguments', zodSummary(parsed.error));
       }
-      let total = 0n;
+      let subtotal = 0n;
+      let taxTotal = 0n;
       for (const item of parsed.data.items) {
-        total += BigInt(item.quantity) * BigInt(item.unitPriceMinor);
+        const lineTotal = BigInt(item.quantity) * BigInt(item.unitPriceMinor);
+        subtotal += lineTotal;
+        taxTotal += taxMinorFor(lineTotal, item.taxBps);
       }
+      const total = subtotal + taxTotal;
       if (total > MAX_SAFE_MONEY) {
         return observationError('calculate_total', 'Total exceeds the safe money range', 'Reduce quantity or price.');
       }
@@ -224,6 +229,16 @@ export function dispatchToolCall(call: ParsedToolCall | null, catalog: CatalogSt
       const parsed = DraftOrderArgsSchema.safeParse(call.args);
       if (!parsed.success) {
         return observationError('draft_order', 'Invalid draft_order arguments', zodSummary(parsed.error));
+      }
+      for (const line of parsed.data.lines) {
+        const catalogItem = catalog.getBySku(line.sku);
+        if (catalogItem && line.unitPriceMinor !== catalogItem.unitPriceMinor) {
+          return observationError(
+            'draft_order',
+            'REJECT_PRICE_MISMATCH: Unit price does not match owner catalog',
+            `SKU ${line.sku} catalog price is ${catalogItem.unitPriceMinor} minor units, got ${line.unitPriceMinor}.`,
+          );
+        }
       }
       const built = buildProposalFromDraft(parsed.data);
       if (!built.ok) {
