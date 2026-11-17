@@ -92,7 +92,7 @@ export function LedgerGrid({
                   type="button"
                   onClick={() => onToggleExpand(tx.id)}
                   aria-expanded={isExpanded}
-                  className="shrink-0 rounded px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-forest-600"
+                  className="shrink-0 rounded px-2 py-1 text-xs font-medium text-[#9aa9a0] hover:text-[#c8f169] hover:bg-[#1c3428] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c8f169]"
                 >
                   {isExpanded ? 'Hide details' : 'Details'}
                 </button>
@@ -118,7 +118,7 @@ export function LedgerGrid({
                     type="button"
                     onClick={() => onOpenQr(tx)}
                     aria-label={`Open QR approval for ${tx.invoiceNumber}`}
-                    className="flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-surface-border text-slate-600 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-forest-600"
+                    className="flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-[#1d2d25] text-[#9aa9a0] hover:text-[#c8f169] hover:bg-[#1c3428] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c8f169]"
                   >
                     <QrCode className="h-4 w-4" aria-hidden="true" />
                   </button>
@@ -126,15 +126,15 @@ export function LedgerGrid({
               )}
 
               {isExpanded && tx.reasoningSteps.length > 0 && (
-                <div className="mt-4 space-y-3 border-t border-surface-border pt-4">
-                  <h3 className="text-xs font-semibold text-slate-800">Agent reasoning</h3>
+                <div className="mt-4 space-y-3 border-t border-[#1d2d25] pt-4">
+                  <h3 className="text-xs font-semibold text-[#c8f169]">Agent reasoning</h3>
                   {tx.reasoningSteps.map((step) => (
                     <div key={step.round} className="flex items-start gap-3 text-xs">
-                      <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded border text-[10px] font-bold ${step.round === 4 && tx.status === 'Review required' ? 'border-amber-300 bg-amber-100 text-amber-800' : 'border-emerald-300 bg-emerald-100 text-emerald-800'}`}>
+                      <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded border text-[10px] font-bold ${step.round === 4 && tx.status === 'Review required' ? 'border-amber-500/30 bg-amber-950/60 text-amber-300' : 'border-[#2b4c3b] bg-[#1c3428] text-[#c8f169]'}`}>
                         R{step.round}
                       </span>
-                      <span className="min-w-0 text-slate-600">
-                        <span className="font-semibold text-slate-900">{step.name}: </span>{step.summary}
+                      <span className="min-w-0 text-[#9aa9a0]">
+                        <span className="font-semibold text-[#eaf0eb]">{step.name}: </span>{step.summary}
                       </span>
                     </div>
                   ))}
@@ -232,7 +232,7 @@ export function LedgerGrid({
                         </button>
                         <button
                           onClick={() => onOpenQr(tx)}
-                          className="p-1 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded"
+                          className="p-1 text-[#9aa9a0] hover:text-[#c8f169] hover:bg-[#1c3428] rounded transition-colors"
                           title="One-Time Mobile QR Approval"
                         >
                           <QrCode className="w-3.5 h-3.5" />

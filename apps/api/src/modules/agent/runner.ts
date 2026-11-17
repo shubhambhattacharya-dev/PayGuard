@@ -131,7 +131,7 @@ export interface ProviderConfig {
 }
 
 const DEFAULT_GEMINI_MODELS: readonly string[] = ['gemini-2.5-flash', 'gemini-flash-latest'];
-const DEFAULT_GROQ_MODEL = 'openai/gpt-oss-20b';
+const DEFAULT_GROQ_MODELS: readonly string[] = ['qwen/qwen3.8-27b', 'openai/gpt-oss-20b'];
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -210,46 +210,94 @@ function createGeminiChatFn(apiKey: string, models: readonly string[], fetchFn: 
   };
 }
 
-function createGroqChatFn(apiKey: string, model: string, fetchFn: typeof fetch): AgentChatFn {
-  return async (messages) => {
-    const body: Record<string, unknown> = {
-      model,
-      temperature: 0,
-      max_tokens: 2048,
-      messages: toOpenAiMessages(messages),
+function recoverGroqToolUseFailed(rawErrorText: string): string | null {
+  try {
+    const parsedErr = JSON.parse(rawErrorText) as {
+      error?: { code?: string; failed_generation?: string };
     };
-    if (model.startsWith('openai/gpt-oss')) {
-      body.reasoning_effort = 'low'; // keep reasoning short so the tool-call JSON is emitted
+    const failedGen = parsedErr.error?.failed_generation;
+    if (parsedErr.error?.code !== 'tool_use_failed' || typeof failedGen !== 'string') {
+      return null;
     }
+    const callObj = JSON.parse(failedGen) as Record<string, unknown>;
+    if (typeof callObj.tool === 'string') {
+      return JSON.stringify({ tool: callObj.tool, args: callObj.args ?? {} });
+    }
+    if (typeof callObj.name === 'string') {
+      const rawArgs = (callObj.arguments ?? callObj.args ?? {}) as Record<string, unknown>;
+      if (typeof rawArgs.tool === 'string' && rawArgs.args !== undefined) {
+        return JSON.stringify({ tool: rawArgs.tool, args: rawArgs.args });
+      }
+      return JSON.stringify({ tool: callObj.name, args: rawArgs });
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
-    let res: Response;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      res = await timedFetch(
-        'https://api.groq.com/openai/v1/chat/completions',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-          body: JSON.stringify(body),
-        },
-        fetchFn,
-      );
-      if (res.status === 429 && attempt === 0) {
-        await sleep(2500); // free-tier rate limit - one patient retry
+function createGroqChatFn(apiKey: string, models: readonly string[], fetchFn: typeof fetch): AgentChatFn {
+  return async (messages) => {
+    let lastError = 'GROQ_UNAVAILABLE';
+    for (const model of models) {
+      const body: Record<string, unknown> = {
+        model,
+        temperature: 0,
+        max_tokens: 2048,
+        messages: toOpenAiMessages(messages),
+      };
+      if (model.startsWith('openai/gpt-oss')) {
+        body.reasoning_effort = 'low'; // keep reasoning short so the tool-call JSON is emitted
+      }
+
+      let res: Response;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        res = await timedFetch(
+          'https://api.groq.com/openai/v1/chat/completions',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+            body: JSON.stringify(body),
+          },
+          fetchFn,
+        );
+        if ((res.status === 429 || res.status === 503) && attempt === 0) {
+          await sleep(2500); // free-tier rate limit / transient 503 - one patient retry
+          continue;
+        }
+        break;
+      }
+      res = res!;
+
+      if (res.ok) {
+        const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+        const rawText = data.choices?.[0]?.message?.content ?? '';
+        const text = rawText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+        if (text.length > 0) {
+          return text;
+        }
+        lastError = 'GROQ_EMPTY_RESPONSE';
         continue;
       }
-      break;
-    }
-    res = res!;
 
-    if (!res.ok) {
+      if (res.status === 400) {
+        const errText = typeof res.text === 'function' ? await res.text() : '';
+        const recovered = recoverGroqToolUseFailed(errText);
+        if (recovered !== null) {
+          return recovered;
+        }
+        lastError = 'GROQ_HTTP_400';
+        continue;
+      }
+
+      if (res.status === 404) {
+        lastError = 'GROQ_HTTP_404';
+        continue;
+      }
+
       throw new Error(`GROQ_HTTP_${res.status}`);
     }
-    const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-    const text = data.choices?.[0]?.message?.content ?? '';
-    if (text.trim().length === 0) {
-      throw new Error('GROQ_EMPTY_RESPONSE');
-    }
-    return text;
+    throw new Error(lastError);
   };
 }
 
@@ -263,10 +311,16 @@ export function createProviderChatFn(config: ProviderConfig): { chat: AgentChatF
   const geminiModels = [config.geminiModel?.trim() || process.env.GEMINI_MODEL?.trim() || '', ...DEFAULT_GEMINI_MODELS].filter(
     (model) => model.length > 0,
   );
-  const groqModel = config.groqModel?.trim() || process.env.GROQ_MODEL?.trim() || DEFAULT_GROQ_MODEL;
+  const groqModels = Array.from(
+    new Set(
+      [config.groqModel?.trim() || process.env.GROQ_MODEL?.trim() || '', ...DEFAULT_GROQ_MODELS].filter(
+        (model) => model.length > 0,
+      ),
+    ),
+  );
 
   const gemini = config.geminiApiKey ? createGeminiChatFn(config.geminiApiKey, geminiModels, fetchFn) : null;
-  const groq = config.groqApiKey ? createGroqChatFn(config.groqApiKey, groqModel, fetchFn) : null;
+  const groq = config.groqApiKey ? createGroqChatFn(config.groqApiKey, groqModels, fetchFn) : null;
 
   if (gemini && groq) {
     // Per-instance circuit breaker: once Gemini fails, this chat function

@@ -5,6 +5,7 @@ import { dispatchToolCall, parseToolCall } from './tools.js';
 import {
   runAgentLoop,
   createFixtureChatFn,
+  createProviderChatFn,
   buildVendorDocumentFence,
   buildSystemPrompt,
   MAX_ROUNDS,
@@ -201,5 +202,60 @@ describe('ReAct loop with hard cap (runner.ts)', () => {
     expect(obs.ok).toBe(false);
     expect(obs.terminal).toBe(false);
     expect(obs.summary).toContain('REJECT_PRICE_MISMATCH');
+  });
+
+  it('recovers valid tool JSON from Groq 400 tool_use_failed (Harmony failed_generation)', async () => {
+    const fetchMock: typeof fetch = async () =>
+      new Response(
+        JSON.stringify({
+          error: {
+            message: 'Tool choice is none, but model called a tool',
+            type: 'invalid_request_error',
+            code: 'tool_use_failed',
+            failed_generation: JSON.stringify({
+              name: 'search_catalog',
+              arguments: { query: 'Office Paper Reams' },
+            }),
+          },
+        }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } },
+      );
+
+    const routed = createProviderChatFn({
+      groqApiKey: 'gsk_test_key',
+      groqModel: 'openai/gpt-oss-20b',
+      fetchFn: fetchMock,
+    });
+    expect(routed).not.toBeNull();
+    const reply = await routed!.chat([{ role: 'user', content: 'Order paper' }]);
+    expect(parseToolCall(reply)).toEqual({
+      tool: 'search_catalog',
+      args: { query: 'Office Paper Reams' },
+    });
+  });
+
+  it('falls back to the next Groq model in the chain when primary Groq model returns 404/400', async () => {
+    const calledModels: string[] = [];
+    const fetchMock: typeof fetch = async (_url, init) => {
+      const parsed = JSON.parse(String(init?.body ?? '{}')) as { model: string };
+      calledModels.push(parsed.model);
+      if (calledModels.length === 1) {
+        return new Response(JSON.stringify({ error: { message: 'model_not_found' } }), { status: 404 });
+      }
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: '<think>planning</think>{"tool":"search_catalog","args":{"query":"paper"}}' } }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    };
+
+    const routed = createProviderChatFn({
+      groqApiKey: 'gsk_test_key',
+      fetchFn: fetchMock,
+    });
+    const reply = await routed!.chat([{ role: 'user', content: 'Order paper' }]);
+    expect(calledModels).toEqual(['qwen/qwen3.8-27b', 'openai/gpt-oss-20b']);
+    expect(reply).toBe('{"tool":"search_catalog","args":{"query":"paper"}}');
   });
 });

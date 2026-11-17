@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   type ApprovedForExecution,
@@ -11,7 +12,8 @@ import type { Pool } from 'pg';
 import { createPgPool, runMigrations } from '../../db/pool.js';
 import { PostgresLedger } from './postgres-ledger.js';
 
-const rootEnvPath = path.resolve(process.cwd(), '../../.env');
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const rootEnvPath = path.resolve(__dirname, '../../../../../.env');
 if (!process.env.DATABASE_URL && existsSync(rootEnvPath) && typeof process.loadEnvFile === 'function') {
   process.loadEnvFile(rootEnvPath);
 }
@@ -19,7 +21,23 @@ if (!process.env.DATABASE_URL && existsSync(rootEnvPath) && typeof process.loadE
 const DATABASE_URL =
   process.env.DATABASE_URL ?? 'postgresql://payguard:payguard@127.0.0.1:5432/payguard';
 
-describe('PostgresLedger (Ticket 1 Red-First TDD: SELECT FOR UPDATE & Idempotency)', () => {
+const isCi = process.env.CI === 'true' || process.env.CI === '1';
+
+async function canReachPostgres(connectionString: string): Promise<boolean> {
+  const probePool = createPgPool(connectionString);
+  try {
+    await probePool.query('SELECT 1');
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await probePool.end().catch(() => undefined);
+  }
+}
+
+const pgReachable = isCi ? true : await canReachPostgres(DATABASE_URL);
+
+describe.skipIf(!pgReachable)('PostgresLedger (Ticket 1 Red-First TDD: SELECT FOR UPDATE & Idempotency)', () => {
   let pool: Pool;
   let ledger: PostgresLedger;
   const ownerId = 'pg_corp_finance_01';
@@ -55,7 +73,9 @@ describe('PostgresLedger (Ticket 1 Red-First TDD: SELECT FOR UPDATE & Idempotenc
   });
 
   afterAll(async () => {
-    await pool.end();
+    if (pool) {
+      await pool.end();
+    }
   });
 
   it('rejects settlement when capability token is forged (FORBIDDEN_CAPABILITY)', async () => {
