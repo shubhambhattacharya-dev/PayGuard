@@ -15,6 +15,7 @@ services:
         sync: false
       - key: PAYPAL_CLIENT_SECRET
         sync: false
+      # CSV allowed: one webhook id per subscribed event type.
       - key: PAYPAL_WEBHOOK_ID
         sync: false
       - key: GEMINI_API_KEY

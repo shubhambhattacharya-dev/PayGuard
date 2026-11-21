@@ -12,8 +12,13 @@ import type { PayPalClient } from './client.js';
 
 export interface PayPalWebhookConfig {
   readonly client: PayPalClient;
-  /** Webhook ID from developer.paypal.com for THIS subscription. */
-  readonly webhookId: string;
+  /**
+   * Webhook ID(s) from developer.paypal.com. PayPal delivers each event under
+   * the webhook that subscribed to it - one event type per webhook is a valid
+   * setup, so verification tries every configured id and fails closed only
+   * when none matches.
+   */
+  readonly webhookIds: readonly string[];
 }
 
 export interface PayPalWebhookHeaders {
@@ -100,34 +105,38 @@ export async function verifyPayPalWebhookSignature(
     return { verified: false, reason: 'CERT_URL_NOT_PAYPAL' };
   }
 
-  let response: VerifySignatureApiResponse | null = null;
-  try {
-    const result = await config.client.request<VerifySignatureApiResponse>({
-      method: 'POST',
-      path: '/v1/notifications/verify-webhook-signature',
-      body: {
-        auth_algo: h.authAlgo,
-        cert_url: h.certUrl,
-        transmission_id: h.transmissionId,
-        transmission_sig: h.transmissionSig,
-        transmission_time: h.transmissionTime,
-        webhook_id: config.webhookId,
-        webhook_event: input.event,
-      },
-    });
-    if (!result.ok) {
+  let lastOutcome: WebhookVerifyOutcome | null = null;
+  for (const webhookId of config.webhookIds) {
+    let verdict: string | undefined;
+    try {
+      const result = await config.client.request<VerifySignatureApiResponse>({
+        method: 'POST',
+        path: '/v1/notifications/verify-webhook-signature',
+        body: {
+          auth_algo: h.authAlgo,
+          cert_url: h.certUrl,
+          transmission_id: h.transmissionId,
+          transmission_sig: h.transmissionSig,
+          transmission_time: h.transmissionTime,
+          webhook_id: webhookId,
+          webhook_event: input.event,
+        },
+      });
+      if (!result.ok) {
+        return { verified: false, reason: 'PAYPAL_UNREACHABLE' };
+      }
+      verdict = result.data?.verification_status;
+    } catch {
       return { verified: false, reason: 'PAYPAL_UNREACHABLE' };
     }
-    response = result.data;
-  } catch {
-    return { verified: false, reason: 'PAYPAL_UNREACHABLE' };
+
+    if (verdict === 'SUCCESS') {
+      return { verified: true, event: input.event as PayPalWebhookEvent };
+    }
+    lastOutcome = { verified: false, reason: 'PAYPAL_REJECTED' };
   }
 
-  if (response?.verification_status !== 'SUCCESS') {
-    return { verified: false, reason: 'PAYPAL_REJECTED' };
-  }
-
-  return { verified: true, event: input.event as PayPalWebhookEvent };
+  return lastOutcome ?? { verified: false, reason: 'PAYPAL_REJECTED' };
 }
 
 /**

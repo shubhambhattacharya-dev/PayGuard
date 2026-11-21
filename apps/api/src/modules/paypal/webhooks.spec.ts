@@ -88,7 +88,7 @@ describe('verifyPayPalWebhookSignature (fail closed)', () => {
   it('rejects missing PayPal headers without contacting PayPal', async () => {
     const { client, fetchFn } = makeClient('SUCCESS');
     const outcome = await verifyPayPalWebhookSignature(
-      { client, webhookId: 'WHID' },
+      { client, webhookIds: ['WHID'] },
       { headers: { authAlgo: 'SHA256withRSA' }, event: SAMPLE_EVENT },
     );
     expect(outcome).toEqual({ verified: false, reason: 'MISSING_HEADERS' });
@@ -98,7 +98,7 @@ describe('verifyPayPalWebhookSignature (fail closed)', () => {
   it('rejects malformed events (no id / event_type) before verification', async () => {
     const { client } = makeClient('SUCCESS');
     const outcome = await verifyPayPalWebhookSignature(
-      { client, webhookId: 'WHID' },
+      { client, webhookIds: ['WHID'] },
       { headers: VALID_HEADERS, event: { foo: 'bar' } },
     );
     expect(outcome).toEqual({ verified: false, reason: 'MALFORMED_EVENT' });
@@ -107,7 +107,7 @@ describe('verifyPayPalWebhookSignature (fail closed)', () => {
   it('rejects non-PayPal cert URLs (defense in depth)', async () => {
     const { client, fetchFn } = makeClient('SUCCESS');
     const outcome = await verifyPayPalWebhookSignature(
-      { client, webhookId: 'WHID' },
+      { client, webhookIds: ['WHID'] },
       {
         headers: { ...VALID_HEADERS, certUrl: 'https://evil.example.com/cert.pem' },
         event: SAMPLE_EVENT,
@@ -120,7 +120,7 @@ describe('verifyPayPalWebhookSignature (fail closed)', () => {
   it('fails closed when PayPal verdicts FAILURE', async () => {
     const { client } = makeClient('FAILURE');
     const outcome = await verifyPayPalWebhookSignature(
-      { client, webhookId: 'WHID' },
+      { client, webhookIds: ['WHID'] },
       { headers: VALID_HEADERS, event: SAMPLE_EVENT },
     );
     expect(outcome).toEqual({ verified: false, reason: 'PAYPAL_REJECTED' });
@@ -136,7 +136,7 @@ describe('verifyPayPalWebhookSignature (fail closed)', () => {
     });
     const client = createPayPalClient({ clientId: 'cid', clientSecret: 'cs', baseUrl: 'https://api-m.sandbox.paypal.com' }, { fetchFn: fetchFn as unknown as typeof fetch });
     const outcome = await verifyPayPalWebhookSignature(
-      { client, webhookId: 'WHID' },
+      { client, webhookIds: ['WHID'] },
       { headers: VALID_HEADERS, event: SAMPLE_EVENT },
     );
     expect(outcome).toEqual({ verified: false, reason: 'PAYPAL_UNREACHABLE' });
@@ -145,7 +145,30 @@ describe('verifyPayPalWebhookSignature (fail closed)', () => {
   it('verifies when PayPal verdicts SUCCESS', async () => {
     const { client } = makeClient('SUCCESS');
     const outcome = await verifyPayPalWebhookSignature(
-      { client, webhookId: 'WHID' },
+      { client, webhookIds: ['WHID'] },
+      { headers: VALID_HEADERS, event: SAMPLE_EVENT },
+    );
+    expect(outcome.verified).toBe(true);
+  });
+
+  it('verifies against the matching webhook id when several are configured (one-event-per-webhook setup)', async () => {
+    const fetchFn = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const href = typeof url === 'string' ? url : url.toString();
+      if (href.includes('/v1/oauth2/token')) {
+        return new Response(JSON.stringify({ access_token: 'test-token', expires_in: 3600 }), { status: 200 });
+      }
+      const body = JSON.parse(String(init?.body ?? '{}')) as { webhook_id?: string };
+      return new Response(
+        JSON.stringify({ verification_status: body.webhook_id === 'WH-DENIED' ? 'SUCCESS' : 'FAILURE' }),
+        { status: 200 },
+      );
+    });
+    const client = createPayPalClient(
+      { clientId: 'cid', clientSecret: 'cs', baseUrl: 'https://api-m.sandbox.paypal.com' },
+      { fetchFn: fetchFn as unknown as typeof fetch },
+    );
+    const outcome = await verifyPayPalWebhookSignature(
+      { client, webhookIds: ['WH-CAPTURE', 'WH-DENIED'] },
       { headers: VALID_HEADERS, event: SAMPLE_EVENT },
     );
     expect(outcome.verified).toBe(true);
@@ -169,7 +192,7 @@ describe('POST /v1/webhooks/paypal route', () => {
     const resNoConfig = await noConfig.inject({ method: 'POST', url: '/v1/webhooks/paypal', payload: SAMPLE_EVENT, headers: HTTP_HEADERS });
     expect(resNoConfig.statusCode).toBe(503);
 
-    const noDurability = buildServer(500_000, { paypalWebhook: { client, webhookId: 'WHID' } });
+    const noDurability = buildServer(500_000, { paypalWebhook: { client, webhookIds: ['WHID'] } });
     const resNoDurability = await noDurability.inject({ method: 'POST', url: '/v1/webhooks/paypal', payload: SAMPLE_EVENT, headers: HTTP_HEADERS });
     expect(resNoDurability.statusCode).toBe(503);
     expect(resNoDurability.json<{ error: string }>().error).toBe('WEBHOOKS_REQUIRE_DURABLE_STORE');
@@ -178,7 +201,7 @@ describe('POST /v1/webhooks/paypal route', () => {
   it('processes a verified capture event once and ignores the replay', async () => {
     const { client } = makeClient('SUCCESS');
     const durability = new FakeDurability();
-    const server = buildServer(500_000, { paypalWebhook: { client, webhookId: 'WHID' }, durability });
+    const server = buildServer(500_000, { paypalWebhook: { client, webhookIds: ['WHID'] }, durability });
 
     const first = await server.inject({ method: 'POST', url: '/v1/webhooks/paypal', payload: SAMPLE_EVENT, headers: HTTP_HEADERS });
     expect(first.statusCode).toBe(200);
@@ -196,7 +219,7 @@ describe('POST /v1/webhooks/paypal route', () => {
   it('401s a tampered transmission (PayPal verdicts FAILURE)', async () => {
     const { client } = makeClient('FAILURE');
     const durability = new FakeDurability();
-    const server = buildServer(500_000, { paypalWebhook: { client, webhookId: 'WHID' }, durability });
+    const server = buildServer(500_000, { paypalWebhook: { client, webhookIds: ['WHID'] }, durability });
 
     const res = await server.inject({ method: 'POST', url: '/v1/webhooks/paypal', payload: SAMPLE_EVENT, headers: HTTP_HEADERS });
     expect(res.statusCode).toBe(401);

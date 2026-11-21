@@ -23,7 +23,10 @@ const databaseUrl = process.env.DATABASE_URL?.trim() ?? '';
 const paypalClientId = process.env.PAYPAL_CLIENT_ID?.trim() ?? '';
 const paypalClientSecret = process.env.PAYPAL_CLIENT_SECRET?.trim() ?? '';
 const paypalBaseUrl = process.env.PAYPAL_BASE_URL?.trim() || 'https://api-m.sandbox.paypal.com';
-const paypalWebhookId = process.env.PAYPAL_WEBHOOK_ID?.trim() ?? '';
+const paypalWebhookIds = (process.env.PAYPAL_WEBHOOK_ID ?? '')
+  .split(',')
+  .map((id) => id.trim())
+  .filter((id) => id.length > 0);
 
 const paypalExecutor =
   paypalClientId && paypalClientSecret
@@ -79,18 +82,18 @@ if (!authDisabled && authKeys.size === 0) {
 const auth = authKeys.size > 0 ? { keys: authKeys } : undefined;
 
 // --- PayPal webhook verification inputs ---
+// PAYPAL_WEBHOOK_ID accepts a CSV: one webhook per event type is a valid
+// PayPal setup, and every webhook has its own verification id.
 const paypalWebhook =
-  paypalExecutor && paypalWebhookId
+  paypalExecutor && paypalWebhookIds.length > 0
     ? {
-        // The executor wraps a client with token caching; rebuild one client for
-        // the executor + webhook pair via the same credentials is intentional:
-        // the webhook verifies signatures through the same OAuth client.
+        // The webhook verifies signatures through the same OAuth-capable client.
         client: createPayPalClient({
           clientId: paypalClientId,
           clientSecret: paypalClientSecret,
           baseUrl: paypalBaseUrl,
         }),
-        webhookId: paypalWebhookId,
+        webhookIds: paypalWebhookIds,
       }
     : undefined;
 
