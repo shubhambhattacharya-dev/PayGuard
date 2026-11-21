@@ -51,14 +51,8 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
       { status: 401 },
     );
   }
-  if (isProxy && isRead) {
-    return NextResponse.next(); // public read-only demo
-  }
-  if (pathname.startsWith('/api/login') || pathname.startsWith('/api/logout')) {
-    return NextResponse.next();
-  }
-  const next = encodeURIComponent(pathname);
-  return NextResponse.redirect(new URL(`/login?next=${next}`, req.url));
+  // Everything else (pages, reads) is public in view-only mode.
+  return NextResponse.next();
 }
 
 export const config = {
