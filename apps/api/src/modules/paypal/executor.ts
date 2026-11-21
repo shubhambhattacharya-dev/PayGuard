@@ -75,6 +75,9 @@ export function createPayPalExecutor(client: PayPalClient): PayPalExecutor {
           purchase_units: [
             {
               reference_id: token.idempotencyKey.slice(0, 127),
+              // custom_id is what PayPal reliably surfaces on PAYMENT.CAPTURE.*
+              // webhook events - it is the durable webhook→ledger linkage.
+              custom_id: token.idempotencyKey.slice(0, 127),
               description: `PayGuard settlement ${token.proposal.invoiceId}`.slice(0, 127),
               amount: {
                 currency_code: token.proposal.currency,

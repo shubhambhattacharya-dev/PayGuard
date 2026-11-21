@@ -1461,15 +1461,23 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       }
 
       const action = classifyCaptureEvent(event.event_type);
-      const referenceId = typeof event.resource?.reference_id === 'string' ? event.resource.reference_id : undefined;
-      const railUpdate = await durability.applyRailAction({ referenceId, action });
+      // Webhook -> ledger linkage: custom_id (set at order creation) is what
+      // PayPal reliably surfaces on capture events; reference_id kept as a
+      // fallback. Both carry our idempotency key.
+      const rawReference =
+        typeof event.resource?.custom_id === 'string' && event.resource.custom_id.length > 0
+          ? event.resource.custom_id
+          : typeof event.resource?.reference_id === 'string' && event.resource.reference_id.length > 0
+            ? event.resource.reference_id
+            : undefined;
+      const railUpdate = await durability.applyRailAction({ referenceId: rawReference, action });
 
       pushAudit({
         id: `evt-${randomUUID().slice(0, 8)}`,
         timestamp: new Date().toISOString(),
         action: 'EVALUATE',
         actor: 'paypal-webhook',
-        invoiceId: referenceId ?? (typeof event.resource?.id === 'string' ? event.resource.id : 'unknown'),
+        invoiceId: rawReference ?? (typeof event.resource?.id === 'string' ? event.resource.id : 'unknown'),
         vendor: 'PayPal rail',
         amountMinor: 0,
         decisionState: action,

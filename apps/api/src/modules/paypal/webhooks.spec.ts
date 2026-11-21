@@ -38,6 +38,7 @@ const SAMPLE_EVENT = {
     id: 'CAPTURE-01',
     status: 'COMPLETED',
     reference_id: 'idem_test_01',
+    custom_id: 'idem_test_01',
   },
 } as const;
 

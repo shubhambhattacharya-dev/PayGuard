@@ -38,6 +38,8 @@ export interface PayPalWebhookEvent {
     readonly id?: string;
     readonly status?: string;
     readonly reference_id?: string;
+    /** Set at order creation; PayPal surfaces this on PAYMENT.CAPTURE.* events. */
+    readonly custom_id?: string;
     readonly supplementary_data?: {
       readonly related_ids?: {
         readonly order_id?: string;
