@@ -220,3 +220,32 @@ describe('Maker-checker roles', () => {
     expect(res.statusCode).toBe(404);
   });
 });
+
+it('RE-AUDIT regression: proposer sending the FULL key:owner form cannot escalate to admin', async () => {
+  const server = buildServer(500_000, {
+    auth: {
+      keys: new Map([['pgk_prop', 'owner_northstar']]),
+      roles: new Map<string, ApiKeyRole>([['pgk_prop', 'proposer']]),
+    },
+  });
+  // Same proposer key, but in the full env-entry form (with owner suffix) —
+  // the role lookup must normalize it, NOT default the missing entry to admin.
+  for (const url of ['/v1/hitl/approve', '/v1/transactions/tx-1/approve']) {
+    const res = await server.inject({
+      method: 'POST',
+      url,
+      headers: { authorization: 'Bearer pgk_prop:owner_northstar' },
+      payload: url.includes('hitl') ? { singleUseCode: 'PG-ANY' } : undefined,
+    });
+    expect(res.statusCode, `${url} full-form proposer must stay 403`).toBe(403);
+    expect(res.json<{ error: string }>().error).toBe('FORBIDDEN_ROLE');
+  }
+  // Sanity: full form still drafts fine (evaluate has no role restriction).
+  const evaluate = await server.inject({
+    method: 'POST',
+    url: '/v1/evaluate',
+    headers: { authorization: 'Bearer pgk_prop:owner_northstar' },
+    payload: { proposal: makeProposal({ invoiceId: 'INV-ROLE-4' }) },
+  });
+  expect(evaluate.statusCode).toBe(200);
+});

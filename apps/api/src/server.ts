@@ -479,7 +479,10 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         });
       }
       authedOwnerId = keyOwner;
-      authedBearer = bearer;
+      // Role lookup must use the SAME normalized key as the auth lookup —
+      // a raw bearer with ':owner' suffix would miss the roles map and
+      // default to admin (proposer escalation bug, caught in re-audit).
+      authedBearer = lookupKey;
     }
     // Maker-checker: money-moving routes require an approver/admin key; a
     // proposer key may draft (evaluate/agent) but never settle. Demo mode

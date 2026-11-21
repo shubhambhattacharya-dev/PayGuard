@@ -92,3 +92,19 @@ audit trail for the affected invoice -> Render logs for the decision id.
 - Live PayPal rails + real currency compliance review
 - Per-user dashboard accounts (today: single admin password)
 - Dependency vulnerability scan in CI (pnpm audit / osv-scanner step)
+
+## 7. Known Limitations (accepted risks — review quarterly)
+
+- **No rate limiter on `/api/login`:** the control is password entropy —
+  keep `PAYGUARD_DASHBOARD_PASSWORD` at 96+ bits (`openssl rand -base64 12`
+  or a 4-word passphrase). A serverless-per-instance limiter would be porous;
+  move to a real WAF/rate-limit if the console ever faces the open internet
+  beyond trusted users.
+- **Keys without an explicit role default to `admin`:** always annotate
+  `:proposer` / `:approver` when adding keys — the boot log prints the role
+  distribution so silent admin creep is visible at a glance.
+- **Session cookie comparison is not constant-time:** acceptable for a
+  64-hex-char derived token; revisit only if the console leaves trusted hands.
+- **Free-tier instance limits:** Render free spins down (~cold starts) and
+  its Postgres expires in ~30 days — see §3 for backups or move to a managed
+  PG before any money-like demo.

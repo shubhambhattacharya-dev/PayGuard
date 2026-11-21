@@ -84,6 +84,10 @@ if (!authDisabled && authKeys.size === 0) {
   process.exit(1);
 }
 const auth = authKeys.size > 0 ? { keys: authKeys, roles: authRoles } : undefined;
+const roleCounts = { admin: 0, proposer: 0, approver: 0 } as Record<string, number>;
+for (const role of authRoles.values()) {
+  roleCounts[role] = (roleCounts[role] ?? 0) + 1;
+}
 
 // --- PayPal webhook verification inputs ---
 // PAYPAL_WEBHOOK_ID accepts a CSV: one webhook per event type is a valid
@@ -128,7 +132,7 @@ const started = await server.listen(Number.isFinite(port) && port > 0 ? port : 4
 console.log(`PayGuard API listening on http://localhost:${started.port}`);
 console.log(
   auth
-    ? `Auth: API-key auth ENABLED (${authKeys.size} key(s), identity from key only)`
+    ? `Auth: API-key auth ENABLED (${authKeys.size} key(s), identity from key only — roles: ${roleCounts.admin} admin, ${roleCounts.proposer} proposer, ${roleCounts.approver} approver)`
     : 'Auth: DISABLED (explicit demo mode via PAYGUARD_AUTH_DISABLED=true - never use with real money APIs)',
 );
 console.log(
