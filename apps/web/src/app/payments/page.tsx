@@ -137,7 +137,7 @@ export default function PaymentsPage() {
           error?: string;
         };
         if (!res.ok || !data.success) {
-          setActionError(data.toastMessage ?? data.error ?? `Approve failed (HTTP ${res.status})`);
+          setActionError(data.error === 'LOGIN_REQUIRED' ? 'View-only demo — sign in at /login to approve payments.' : (data.toastMessage ?? data.error ?? `Approve failed (HTTP ${res.status})`));
           return;
         }
         markPaidLocally(tx.id, data.toastMessage ?? 'Gate re-ran, decision stood');
@@ -156,7 +156,7 @@ export default function PaymentsPage() {
       });
       const data = (await res.json()) as { success?: boolean; error?: string };
       if (!res.ok || !data.success) {
-        setActionError(data.error ?? `Reject failed (HTTP ${res.status})`);
+        setActionError(data.error === 'LOGIN_REQUIRED' ? 'View-only demo — sign in at /login to approve payments.' : (data.error ?? `Reject failed (HTTP ${res.status})`));
         return;
       }
       setTransactions((prev) =>

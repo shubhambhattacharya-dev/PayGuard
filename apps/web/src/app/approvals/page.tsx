@@ -56,7 +56,11 @@ function ApprovalsContent() {
       });
       const data = (await res.json()) as { success?: boolean; toastMessage?: string; error?: string };
       if (!res.ok || !data.success) {
-        setError(data.toastMessage ?? data.error ?? `HTTP ${res.status}`);
+        setError(
+          data.error === 'LOGIN_REQUIRED'
+            ? 'View-only demo — sign in at /login to approve payments.'
+            : (data.toastMessage ?? data.error ?? `HTTP ${res.status}`),
+        );
         return;
       }
       setToast(data.toastMessage ?? 'Gate re-ran, decision stood');

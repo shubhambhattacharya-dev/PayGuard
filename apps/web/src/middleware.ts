@@ -10,7 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
  */
 
 const SESSION_COOKIE = 'pg_session';
-const PUBLIC_PATHS = ['/login', '/api/login', '/api/logout'];
+const PUBLIC_PATHS = ['/login', '/api/login', '/api/logout', '/api/session'];
 
 async function expectedSessionToken(): Promise<string | null> {
   const password = process.env.PAYGUARD_DASHBOARD_PASSWORD ?? '';
@@ -29,26 +29,33 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   }
 
   const expected = await expectedSessionToken();
-  if (expected === null) {
-    if (pathname.startsWith('/api/payguard')) {
-      return NextResponse.json(
-        { error: 'DASHBOARD_LOCKED', detail: 'PAYGUARD_DASHBOARD_PASSWORD is not configured.' },
-        { status: 503 },
-      );
-    }
-    return NextResponse.redirect(new URL('/login?locked=1', req.url));
-  }
+  const isRead = req.method === 'GET' || req.method === 'HEAD';
+  const isProxy = pathname.startsWith('/api/payguard');
 
-  const cookie = req.cookies.get(SESSION_COOKIE)?.value;
-  if (cookie === expected) {
+  // Public demo mode: READ-ONLY without a session (founders/judges can view
+  // the ledger, traces and audit trail) — every money-moving POST still
+  // requires a signed-in admin session. View-only never becomes write-only.
+  const cookie = expected !== null ? req.cookies.get(SESSION_COOKIE)?.value : undefined;
+  const authenticated = expected !== null && cookie === expected;
+
+  if (authenticated) {
     return NextResponse.next();
   }
 
-  if (pathname.startsWith('/api/payguard')) {
+  if (isProxy && !isRead) {
     return NextResponse.json(
-      { error: 'UNAUTHENTICATED', detail: 'Dashboard login required.' },
+      {
+        error: 'LOGIN_REQUIRED',
+        detail: 'View-only mode — sign in at /login to approve payments.',
+      },
       { status: 401 },
     );
+  }
+  if (isProxy && isRead) {
+    return NextResponse.next(); // public read-only demo
+  }
+  if (pathname.startsWith('/api/login') || pathname.startsWith('/api/logout')) {
+    return NextResponse.next();
   }
   const next = encodeURIComponent(pathname);
   return NextResponse.redirect(new URL(`/login?next=${next}`, req.url));
