@@ -61,25 +61,29 @@ if (databaseUrl) {
 const langfuse = createLangfuseReporter();
 
 // --- Auth: fail closed at boot (P0-1 fix) ---
-// Production requires PAYGUARD_API_KEYS ("apiKey:ownerId,..." CSV).
+// Production requires PAYGUARD_API_KEYS ("apiKey:ownerId[:role],..." CSV).
+// Role (optional, default admin): 'proposer' drafts, 'approver' moves money,
+// 'admin' does both (maker-checker separation).
 // Demo/test mode must be an explicit opt-out via PAYGUARD_AUTH_DISABLED=true.
 const authDisabled = process.env.PAYGUARD_AUTH_DISABLED === 'true';
 const rawKeys = process.env.PAYGUARD_API_KEYS?.trim() ?? '';
 const authKeys = new Map<string, string>();
+const authRoles = new Map<string, 'admin' | 'proposer' | 'approver'>();
 for (const entry of rawKeys.split(',')) {
-  const [key, owner] = entry.split(':').map((part) => part?.trim());
+  const [key, owner, role] = entry.split(':').map((part) => part?.trim());
   if (key && owner) {
     authKeys.set(key, owner);
+    authRoles.set(key, role === 'proposer' || role === 'approver' ? role : 'admin');
   }
 }
 if (!authDisabled && authKeys.size === 0) {
   console.error(
-    'REFUSING TO START: no auth configured. Set PAYGUARD_API_KEYS ("apiKey:ownerId,...") ' +
+    'REFUSING TO START: no auth configured. Set PAYGUARD_API_KEYS ("apiKey:ownerId[:role],...") ' +
       'or explicitly set PAYGUARD_AUTH_DISABLED=true for demo mode. Money APIs never run unauthenticated by default.',
   );
   process.exit(1);
 }
-const auth = authKeys.size > 0 ? { keys: authKeys } : undefined;
+const auth = authKeys.size > 0 ? { keys: authKeys, roles: authRoles } : undefined;
 
 // --- PayPal webhook verification inputs ---
 // PAYPAL_WEBHOOK_ID accepts a CSV: one webhook per event type is a valid

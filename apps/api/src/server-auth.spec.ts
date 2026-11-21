@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildServer } from './server.js';
+import { buildServer, type ApiKeyRole } from './server.js';
 import { toMoneyMinor, type OrderProposal } from '@payguard/contracts';
 
 /**
@@ -141,5 +141,82 @@ describe('Demo mode (no auth configured)', () => {
     expect(res.statusCode).toBe(200);
     const body = res.json<{ executionMode: string }>();
     expect(body.executionMode).toBe('in_memory_simulated');
+  });
+});
+
+describe('Maker-checker roles', () => {
+  const ROLE_KEYS = new Map([
+    ['pgk_prop', 'owner_northstar'],
+    ['pgk_app', 'owner_northstar'],
+  ]);
+  const ROLE_MAP: ReadonlyMap<string, ApiKeyRole> = new Map([
+    ['pgk_prop', 'proposer'],
+    ['pgk_app', 'approver'],
+  ]);
+
+  function makeServer() {
+    return buildServer(500_000, { auth: { keys: ROLE_KEYS, roles: ROLE_MAP } });
+  }
+
+  it('proposer can draft (evaluate) but can NEVER move money', async () => {
+    const server = makeServer();
+
+    const evaluate = await server.inject({
+      method: 'POST',
+      url: '/v1/evaluate',
+      headers: { authorization: 'Bearer pgk_prop' },
+      payload: { proposal: makeProposal({ invoiceId: 'INV-ROLE-1' }) },
+    });
+    expect(evaluate.statusCode).toBe(200);
+    expect(evaluate.json<{ decision: { state: string } }>().decision.state).toBe('APPROVED');
+
+    for (const attempt of [
+      { method: 'POST' as const, url: '/v1/hitl/approve', payload: { singleUseCode: 'PG-ANY' } },
+      { method: 'POST' as const, url: '/v1/transactions/tx-1/approve' },
+      { method: 'POST' as const, url: '/v1/transactions/tx-1/reject' },
+      {
+        method: 'POST' as const,
+        url: '/v1/execute',
+        payload: { ownerId: 'owner_northstar', idempotencyKey: 'idem-role-1', proposal: makeProposal({ invoiceId: 'INV-ROLE-2' }) },
+      },
+    ]) {
+      const res = await server.inject({
+        method: attempt.method,
+        url: attempt.url,
+        headers: { authorization: 'Bearer pgk_prop' },
+        ...(attempt.payload !== undefined ? { payload: attempt.payload } : {}),
+      });
+      expect(res.statusCode, `${attempt.url} must 403 for proposer`).toBe(403);
+      expect(res.json<{ error: string }>().error).toBe('FORBIDDEN_ROLE');
+    }
+  });
+
+  it('approver passes the role gate (404 on unknown tx, not 403) and can draft too', async () => {
+    const server = makeServer();
+
+    const approve = await server.inject({
+      method: 'POST',
+      url: '/v1/transactions/tx-does-not-exist/approve',
+      headers: { authorization: 'Bearer pgk_app' },
+    });
+    expect(approve.statusCode).toBe(404);
+
+    const evaluate = await server.inject({
+      method: 'POST',
+      url: '/v1/evaluate',
+      headers: { authorization: 'Bearer pgk_app' },
+      payload: { proposal: makeProposal({ invoiceId: 'INV-ROLE-3' }) },
+    });
+    expect(evaluate.statusCode).toBe(200);
+  });
+
+  it('legacy two-part keys default to admin (approve path reachable)', async () => {
+    const server = buildServer(500_000, { auth: { keys: KEYS } });
+    const res = await server.inject({
+      method: 'POST',
+      url: '/v1/transactions/tx-does-not-exist/approve',
+      headers: { authorization: 'Bearer pgk_alpha' },
+    });
+    expect(res.statusCode).toBe(404);
   });
 });

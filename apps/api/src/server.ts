@@ -142,6 +142,11 @@ export function detectPromptInjection(text: string): string | null {
   return null;
 }
 
+/** Maker-checker roles: 'proposer' drafts, 'approver' moves money, 'admin' does both. */
+export type ApiKeyRole = 'admin' | 'proposer' | 'approver';
+
+const MONEY_MOVING_ROLES: readonly ApiKeyRole[] = ['approver', 'admin'];
+
 export interface BuildServerOptions {
   /**
    * PayPal rail behind the policy gate. When omitted, /v1/execute settles the
@@ -155,12 +160,17 @@ export interface BuildServerOptions {
   readonly paypalWebhook?: PayPalWebhookConfig;
   readonly ledger?: LedgerStore
   /**
-   * API-key auth. Key -> ownerId map; every /v1 route (except health and the
-   * signature-verified webhook route) then requires `Authorization: Bearer`.
-   * Identity is always taken from the key, never from the request body.
-   * `undefined` = auth disabled (explicit demo/test mode only).
+   * API-key auth. Key -> ownerId map (plus optional key -> role map for
+   * maker-checker: 'proposer' | 'approver' | 'admin', default admin); every
+   * /v1 route (except health and the signature-verified webhook route) then
+   * requires `Authorization: Bearer`. Identity is always taken from the key,
+   * never from the request body. Money-moving routes additionally require an
+   * approver/admin role. `undefined` = auth disabled (demo/test mode only).
    */
-  readonly auth?: { readonly keys: ReadonlyMap<string, string> };
+  readonly auth?: {
+    readonly keys: ReadonlyMap<string, string>;
+    readonly roles?: ReadonlyMap<string, ApiKeyRole>;
+  };
   /** Durable side-store: audit evidence, pending QR approvals, rail events. */
   readonly durability?: DurableStore;
   /**
@@ -452,6 +462,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
     // PayPal webhook route are the only public paths.
     const PUBLIC_PATHS = new Set(['/healthz', '/health', '/readyz', '/v1/webhooks/paypal']);
     let authedOwnerId: string | null = null;
+    let authedBearer = '';
     if (serverOptions.auth && !PUBLIC_PATHS.has(options.url)) {
       const authHeader = options.headers?.['authorization'];
       const bearer = typeof authHeader === 'string' && authHeader.startsWith('Bearer ')
@@ -468,7 +479,25 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         });
       }
       authedOwnerId = keyOwner;
+      authedBearer = bearer;
     }
+    // Maker-checker: money-moving routes require an approver/admin key; a
+    // proposer key may draft (evaluate/agent) but never settle. Demo mode
+    // (auth disabled) is exempt.
+    const authedRole: ApiKeyRole | null =
+      serverOptions.auth && authedOwnerId !== null
+        ? serverOptions.auth.roles?.get(authedBearer) ?? 'admin'
+        : null;
+    const requireMoneyRole = (): InjectResponse | null => {
+      if (authedRole === null || MONEY_MOVING_ROLES.includes(authedRole)) {
+        return null;
+      }
+      return reply(403, {
+        success: false,
+        error: 'FORBIDDEN_ROLE',
+        detail: `Role '${authedRole}' cannot move money — approver or admin key required (maker-checker separation).`,
+      });
+    };
     // Resolves the request's owner identity: in authed mode the key's owner is
     // authoritative (missing body.ownerId defaults to it; mismatches -> null).
     const resolveOwnerId = (bodyOwnerId: unknown): string | null => {
@@ -699,6 +728,10 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
 
       const execIdempotencyKey = body.idempotencyKey;
       metrics.ownerId = execOwnerId;
+      const execRoleBlocked = requireMoneyRole();
+      if (execRoleBlocked) {
+        return execRoleBlocked;
+      }
 
       // Execute-time policy re-check (P1 fix): the token was minted at evaluate
       // time - velocity, duplicates and policy may have drifted since. The gate
@@ -949,6 +982,10 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       const body = (options.payload ?? {}) as { readonly singleUseCode?: string };
       if (!body.singleUseCode) {
         return reply(400, { success: false, error: 'MISSING_QR_CODE' });
+      }
+      const hitlRoleBlocked = requireMoneyRole();
+      if (hitlRoleBlocked) {
+        return hitlRoleBlocked;
       }
 
       // Brute-force damper: 64-bit codes + a hard per-code rate limit.
@@ -1256,6 +1293,10 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
 
     const txApproveMatch = options.url.match(/^\/v1\/transactions\/([^/]+)\/approve$/);
     if (options.method === 'POST' && txApproveMatch) {
+      const txApproveRoleBlocked = requireMoneyRole();
+      if (txApproveRoleBlocked) {
+        return txApproveRoleBlocked;
+      }
       const txId = txApproveMatch[1];
       const tx = transactions.find((t) => t.id === txId);
       if (!tx) {
@@ -1364,6 +1405,10 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
 
     const txRejectMatch = options.url.match(/^\/v1\/transactions\/([^/]+)\/reject$/);
     if (options.method === 'POST' && txRejectMatch) {
+      const txRejectRoleBlocked = requireMoneyRole();
+      if (txRejectRoleBlocked) {
+        return txRejectRoleBlocked;
+      }
       const txId = txRejectMatch[1];
       const tx = transactions.find((t) => t.id === txId);
       if (!tx) {
