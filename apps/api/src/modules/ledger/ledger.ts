@@ -19,7 +19,12 @@ export type SettlementResult =
   | { readonly success: true; readonly settlement: SettlementReceipt }
   | {
       readonly success: false;
-      readonly error: 'FORBIDDEN_CAPABILITY' | 'INSUFFICIENT_FUNDS';
+      readonly error:
+        | 'FORBIDDEN_CAPABILITY'
+        | 'INSUFFICIENT_FUNDS'
+        | 'DUPLICATE_INVOICE'
+        | 'VELOCITY_CAP_EXCEEDED'
+        | 'IDEMPOTENCY_CONFLICT';
     };
 
 export interface SettleOrderInput {
@@ -32,14 +37,22 @@ export interface SettleOrderInput {
 export interface LedgerStore {
   seedAccount(ownerId: string, initialBalanceMinor: number): void | Promise<void>;
   getBalance(ownerId: string): number | Promise<number>;
+  /** 60-minute rolling settled volume for the velocity policy (single source of truth). */
+  getHourlySpentMinor(ownerId: string): number | Promise<number>;
+  /** True when (ownerId, idempotencyKey) already settled - i.e. this is a replay. */
+  isKnownIdempotencyKey(ownerId: string, idempotencyKey: string): boolean | Promise<boolean>;
   settleOrder(input: SettleOrderInput): Promise<SettlementResult>;
 }
 
 export class InMemoryLedger implements LedgerStore {
   private readonly accounts = new Map<string, number>();
   private readonly idempotencyReceipts = new Map<string, SettlementReceipt>();
+  // Global duplicate-invoice guard: one invoiceId settles exactly once per process.
+  private readonly settledInvoiceIds = new Set<string>();
   // Mutex lock map to prevent race conditions on parallel requests for the same owner
   private readonly accountLocks = new Map<string, Promise<void>>();
+
+  public constructor(private readonly hourlyVelocityCapMinor?: number) {}
 
   public seedAccount(ownerId: string, initialBalanceMinor: number): void {
     this.accounts.set(ownerId, initialBalanceMinor);
@@ -47,6 +60,21 @@ export class InMemoryLedger implements LedgerStore {
 
   public getBalance(ownerId: string): number {
     return this.accounts.get(ownerId) ?? 0;
+  }
+
+  public getHourlySpentMinor(ownerId: string): number {
+    const cutoffMs = Date.now() - 60 * 60_000;
+    let sum = 0;
+    for (const receipt of this.idempotencyReceipts.values()) {
+      if (receipt.ownerId === ownerId && Date.parse(receipt.settledAt) >= cutoffMs) {
+        sum += receipt.amountMinor;
+      }
+    }
+    return sum;
+  }
+
+  public isKnownIdempotencyKey(ownerId: string, idempotencyKey: string): boolean {
+    return this.idempotencyReceipts.has(`${ownerId}:${idempotencyKey}`);
   }
 
   /**
@@ -90,13 +118,28 @@ export class InMemoryLedger implements LedgerStore {
         return { success: true, settlement: existing };
       }
 
-      // 3. Balance check.
+      // 3. Duplicate invoice guard: same invoiceId can never settle twice, even
+      // under different idempotency keys (idempotent replays returned above).
+      if (this.settledInvoiceIds.has(input.proposal.invoiceId)) {
+        return { success: false, error: 'DUPLICATE_INVOICE' };
+      }
+
+      // 3b. Durable-semantics velocity check (best-effort in-memory demo mode).
+      if (
+        this.hourlyVelocityCapMinor !== undefined &&
+        this.getHourlySpentMinor(input.ownerId) + input.proposal.grandTotalMinor >
+          this.hourlyVelocityCapMinor
+      ) {
+        return { success: false, error: 'VELOCITY_CAP_EXCEEDED' };
+      }
+
+      // 4. Balance check.
       const balance = this.accounts.get(input.ownerId) ?? 0;
       if (balance < input.proposal.grandTotalMinor) {
         return { success: false, error: 'INSUFFICIENT_FUNDS' };
       }
 
-      // 4. Atomic decrement + receipt, cached for idempotent replays.
+      // 5. Atomic decrement + receipt, cached for idempotent replays.
       const newBalance = balance - input.proposal.grandTotalMinor;
       this.accounts.set(input.ownerId, newBalance);
       const receipt: SettlementReceipt = {
@@ -108,6 +151,7 @@ export class InMemoryLedger implements LedgerStore {
         settledAt: new Date().toISOString(),
         status: 'SETTLED',
       };
+      this.settledInvoiceIds.add(input.proposal.invoiceId);
       this.idempotencyReceipts.set(cacheKey, receipt);
       return { success: true, settlement: receipt };
     } finally {

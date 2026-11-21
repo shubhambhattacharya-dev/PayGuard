@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,10 +15,22 @@ export function createPgPool(connectionString: string): Pool {
   });
 }
 
+/**
+ * Runs every migration file in sorted order. All migrations are idempotent
+ * (CREATE ... IF NOT EXISTS), so re-running is safe on every boot.
+ */
 export async function runMigrations(pool: Pool): Promise<void> {
-  const localPath = path.join(__dirname, 'migrations', '001_init.sql');
-  const srcFallbackPath = path.resolve(__dirname, '../../src/db/migrations', '001_init.sql');
-  const migrationPath = existsSync(localPath) ? localPath : srcFallbackPath;
-  const sql = await readFile(migrationPath, 'utf8');
-  await pool.query(sql);
+  const localDir = path.join(__dirname, 'migrations');
+  const srcFallbackDir = path.resolve(__dirname, '../../src/db/migrations');
+  const migrationDir = existsSync(localDir) ? localDir : srcFallbackDir;
+  const files = readdirSync(migrationDir)
+    .filter((file) => file.endsWith('.sql'))
+    .sort();
+  if (files.length === 0) {
+    throw new Error(`No migration files found in ${migrationDir}`);
+  }
+  for (const file of files) {
+    const sql = await readFile(path.join(migrationDir, file), 'utf8');
+    await pool.query(sql);
+  }
 }

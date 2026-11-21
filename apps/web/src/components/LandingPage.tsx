@@ -623,7 +623,7 @@ export function LandingPage() {
             <Link href="/overview" className="hover:text-[#c8f169]">Overview</Link>
             <Link href="/audit" className="hover:text-[#c8f169]">Audit trail</Link>
           </div>
-          <span>135 automated tests · TypeScript + Postgres</span>
+          <span>177 automated tests · TypeScript + Postgres</span>
         </div>
       </footer>
     </div>

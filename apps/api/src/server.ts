@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, randomBytes } from 'node:crypto';
 import {
   OrderProposalSchema,
   ReasonCode,
@@ -12,6 +12,13 @@ import {
 import { evaluatePolicy } from './modules/policy/gate.js';
 import { verifyQuoteGrounding, type QuoteCitation } from './modules/policy/quote-matcher.js';
 import { InMemoryLedger, LedgerStore, type SettlementResult } from './modules/ledger/ledger.js';
+import type { DurableStore } from './modules/ledger/durability.js';
+import {
+  verifyPayPalWebhookSignature,
+  classifyCaptureEvent,
+  type PayPalWebhookConfig,
+  type PayPalWebhookEvent,
+} from './modules/paypal/webhooks.js';
 import {
   runAgentLoop,
   createProviderChatFn,
@@ -41,7 +48,7 @@ export interface InjectResponse<T = unknown> {
   readonly statusCode: number;
   readonly headers: Record<string, string>;
   readonly body: string;
-  json(): T;
+  json<R = T>(): R;
 }
 
 export interface EvaluateRequestPayload {
@@ -139,7 +146,21 @@ export interface BuildServerOptions {
    * in-memory ledger and returns a simulated sandbox reference (offline demo).
    */
   paypalExecutor?: PayPalExecutor;
+  /**
+   * PayPal webhook verification inputs (client + webhook id). The webhook
+   * route stays public; PayPal's signature is the identity.
+   */
+  readonly paypalWebhook?: PayPalWebhookConfig;
   readonly ledger?: LedgerStore
+  /**
+   * API-key auth. Key -> ownerId map; every /v1 route (except health and the
+   * signature-verified webhook route) then requires `Authorization: Bearer`.
+   * Identity is always taken from the key, never from the request body.
+   * `undefined` = auth disabled (explicit demo/test mode only).
+   */
+  readonly auth?: { readonly keys: ReadonlyMap<string, string> };
+  /** Durable side-store: audit evidence, pending QR approvals, rail events. */
+  readonly durability?: DurableStore;
   /**
    * Agent chat function. `undefined` = auto (Gemini -> Groq from env keys);
    * `null` = no model available, agent route fails closed to HOLD;
@@ -168,6 +189,8 @@ export interface PayGuardServer {
   readonly capabilityVault: Map<string, ApprovedForExecution>;
   readonly qrApprovals: Map<string, QrApprovalRecord>;
   inject<T = unknown>(options: InjectOptions): Promise<InjectResponse<T>>;
+  /** Restores pending QR approvals from the durable store (call once at boot). */
+  hydrate(): Promise<void>;
   listen(port?: number): Promise<{ port: number; close: () => Promise<void> }>;
 }
 
@@ -184,18 +207,19 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
   const qrApprovals = new Map<string, QrApprovalRecord>();
   const inFlightQrCodes = new Set<string>();
   const settledExecutionEnvelopes = new Map<string, Record<string, unknown>>();
-  const recentSettlements: Array<{ ownerId: string; amountMinor: number; settledAtMs: number }> = [];
-  const getHourlySpentMinor = (ownerId: string): number => {
-    const cutoffMs = Date.now() - 60 * 60_000;
-    while (recentSettlements.length > 0 && recentSettlements[0]!.settledAtMs < cutoffMs) {
-      recentSettlements.shift();
+  // Velocity is read from the ledger store (durable under PostgreSQL, receipt-derived in memory).
+  const getHourlySpentMinor = async (ownerId: string): Promise<number> =>
+    ledger.getHourlySpentMinor(ownerId);
+  // QR codes: 64 bits of entropy (was 32). Single-use codes must not be guessable.
+  const newQrCode = (): string => `PG-${randomBytes(8).toString('hex').toUpperCase()}`;
+  const durability = serverOptions.durability;
+  const pushAudit = (event: AuditEvent): void => {
+    auditEvents.unshift(event);
+    // Durable evidence is best-effort: the in-memory array stays authoritative
+    // for the read path; a failed insert must not fail the money path.
+    if (durability) {
+      void durability.saveAuditEvent(event).catch(() => {});
     }
-    return recentSettlements
-      .filter((entry) => entry.ownerId === ownerId && entry.settledAtMs >= cutoffMs)
-      .reduce((sum, entry) => sum + entry.amountMinor, 0);
-  };
-  const recordSettlementVelocity = (ownerId: string, amountMinor: number): void => {
-    recentSettlements.push({ ownerId, amountMinor, settledAtMs: Date.now() });
   };
   const rateLimitHits = new Map<string, number[]>();
   const rateLimitPerMinute = serverOptions.rateLimitPerMinute ?? 60;
@@ -352,11 +376,18 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       }
     };
 
-    const allowedOrigin = serverOptions.corsOrigin ?? process.env.CORS_ORIGIN ?? '*';
+    // Authed mode defaults to restrictive CORS: the dashboard talks through the
+    // same-origin Next proxy, so no cross-origin header is emitted unless
+    // explicitly configured. Demo mode keeps the legacy wildcard.
+    const allowedOrigin =
+      serverOptions.corsOrigin ?? process.env.CORS_ORIGIN ?? (serverOptions.auth ? '' : '*');
     const corsHeaders: Record<string, string> = {
       'content-type': 'application/json; charset=utf-8',
-      'access-control-allow-origin': allowedOrigin,
-      ...(allowedOrigin !== '*' ? { vary: 'Origin' } : {}),
+      ...(allowedOrigin === '*'
+        ? { 'access-control-allow-origin': '*' }
+        : allowedOrigin.length > 0
+          ? { 'access-control-allow-origin': allowedOrigin, vary: 'Origin' }
+          : {}),
       'access-control-allow-methods': 'GET, POST, OPTIONS',
       'access-control-allow-headers': 'content-type, authorization, x-idempotency-key, x-request-id',
     };
@@ -413,6 +444,38 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       return reply(204, {});
     }
 
+    // 0. AuthN/AuthZ gate (P0-1 fix). When auth is configured, identity comes
+    // from the API key ONLY - client-supplied ownerId is cross-checked against
+    // it and mismatches are rejected. Health routes and the signature-verified
+    // PayPal webhook route are the only public paths.
+    const PUBLIC_PATHS = new Set(['/healthz', '/health', '/readyz', '/v1/webhooks/paypal']);
+    let authedOwnerId: string | null = null;
+    if (serverOptions.auth && !PUBLIC_PATHS.has(options.url)) {
+      const authHeader = options.headers?.['authorization'];
+      const bearer = typeof authHeader === 'string' && authHeader.startsWith('Bearer ')
+        ? authHeader.slice(7).trim()
+        : '';
+      const keyOwner = bearer.length > 0 ? serverOptions.auth.keys.get(bearer) : undefined;
+      if (!keyOwner) {
+        return reply(401, {
+          error: 'UNAUTHENTICATED',
+          detail: 'Valid Authorization: Bearer <api-key> required on /v1 routes.',
+        });
+      }
+      authedOwnerId = keyOwner;
+    }
+    // Resolves the request's owner identity: in authed mode the key's owner is
+    // authoritative (missing body.ownerId defaults to it; mismatches -> null).
+    const resolveOwnerId = (bodyOwnerId: unknown): string | null => {
+      if (authedOwnerId === null) {
+        return typeof bodyOwnerId === 'string' && bodyOwnerId.length > 0 ? bodyOwnerId : null;
+      }
+      if (typeof bodyOwnerId !== 'string' || bodyOwnerId.length === 0) {
+        return authedOwnerId;
+      }
+      return bodyOwnerId === authedOwnerId ? bodyOwnerId : null;
+    };
+
     // 1. Health & Readiness Routes
     if (options.method === 'GET' && options.url === '/readyz') {
       const ready = serverOptions.readinessCheck ? await serverOptions.readinessCheck() : true;
@@ -438,9 +501,29 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
     // 2. Deterministic Policy Gate + Grounding Evaluation Route
     if (options.method === 'POST' && options.url === '/v1/evaluate') {
       const body = (options.payload ?? {}) as Partial<EvaluateRequestPayload>;
+      const retryAfterSec = checkRateLimit(`evaluate:${authedOwnerId ?? (typeof body.ownerId === 'string' ? body.ownerId : 'anon')}`);
+      if (retryAfterSec !== null) {
+        return reply(429, { state: 'REJECTED', error: 'RATE_LIMITED', retryAfterSeconds: retryAfterSec }, { 'retry-after': String(retryAfterSec) });
+      }
       const parsedProposal = OrderProposalSchema.safeParse(body.proposal);
 
-      if (!parsedProposal.success || !body.ownerId) {
+      if (
+        authedOwnerId !== null &&
+        typeof body.ownerId === 'string' &&
+        body.ownerId.length > 0 &&
+        body.ownerId !== authedOwnerId
+      ) {
+        return reply(403, {
+          state: 'REJECTED',
+          reasonCode: ReasonCode.REJECT_SCHEMA_INVALID,
+          error: 'FORBIDDEN_OWNER',
+          decisionId: randomUUID(),
+          evaluatedAt: new Date().toISOString(),
+          issues: ['ownerId does not match the authenticated API key'],
+        });
+      }
+
+      if (!parsedProposal.success || (typeof body.ownerId !== 'string' || body.ownerId.length === 0) && authedOwnerId === null) {
         const decisionId = randomUUID();
         return reply(400, {
           state: 'REJECTED',
@@ -452,7 +535,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       }
 
       const proposal = parsedProposal.data;
-      const ownerId = body.ownerId;
+      const ownerId = resolveOwnerId(body.ownerId) as string;
       const policyVersion = body.policyVersion ?? 'v2026.11';
       const idempotencyKey = body.idempotencyKey ?? `idem_${proposal.invoiceId}`;
 
@@ -516,7 +599,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       // Server-authoritative policy inputs (never trust client-supplied overrides).
       const trustedVendors = defaultTrustedVendors;
       const isDuplicateInvoice = settledInvoices.has(proposal.invoiceId);
-      const hourlySpentMinor = getHourlySpentMinor(ownerId);
+      const hourlySpentMinor = await getHourlySpentMinor(ownerId);
 
       // 2d. Deterministic Policy Gate (Ticket #1 Kernel)
       const decision: PolicyDecision = evaluatePolicy({
@@ -529,7 +612,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         idempotencyKey,
       });
 
-      auditEvents.unshift({
+      pushAudit({
         id: `evt-${randomUUID().slice(0, 8)}`,
         timestamp: new Date().toISOString(),
         action: 'EVALUATE',
@@ -551,8 +634,8 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       }
 
       if (decision.state === 'HOLD') {
-        const qrCode = `PG-${randomUUID().slice(0, 4).toUpperCase()}-${randomUUID().slice(0, 4).toUpperCase()}`;
-        qrApprovals.set(qrCode, {
+        const qrCode = newQrCode();
+        const qrRecord: QrApprovalRecord = {
           code: qrCode,
           ownerId,
           proposal,
@@ -564,7 +647,11 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
           expiresAtMs: Date.now() + 10 * 60_000,
           ...(typeof body.invoiceText === 'string' ? { invoiceText: body.invoiceText } : {}),
           used: false,
-        });
+        };
+        qrApprovals.set(qrCode, qrRecord);
+        if (durability) {
+          void durability.saveQrApproval(qrRecord).catch(() => {});
+        }
         return reply(200, {
           decision,
           qrApproval: {
@@ -580,13 +667,21 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
     // 3. Financial Ledger Execution Route (Ticket #3 Kernel)
     if (options.method === 'POST' && options.url === '/v1/execute') {
       const body = (options.payload ?? {}) as Partial<ExecuteRequestPayload>;
-      const retryAfterSec = checkRateLimit(`execute:${body.ownerId ?? 'anon'}`);
+      const retryAfterSec = checkRateLimit(`execute:${authedOwnerId ?? (typeof body.ownerId === 'string' ? body.ownerId : 'anon')}`);
       if (retryAfterSec !== null) {
         return reply(429, { success: false, error: 'RATE_LIMITED', retryAfterSeconds: retryAfterSec }, { 'retry-after': String(retryAfterSec) });
       }
       const parsedProposal = OrderProposalSchema.safeParse(body.proposal);
 
-      if (!parsedProposal.success || !body.ownerId || !body.idempotencyKey) {
+      const execOwnerId = resolveOwnerId(body.ownerId);
+      if (!parsedProposal.success || !execOwnerId || !body.idempotencyKey) {
+        if (parsedProposal.success && body.idempotencyKey && execOwnerId === null && body.ownerId !== undefined) {
+          return reply(403, {
+            success: false,
+            error: 'FORBIDDEN_OWNER',
+            detail: 'ownerId does not match the authenticated API key.',
+          });
+        }
         return reply(400, {
           success: false,
           error: 'INVALID_EXECUTE_PAYLOAD',
@@ -597,9 +692,35 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         body.token ??
         (body.approvalId ? capabilityVault.get(body.approvalId) : undefined);
 
-      const execOwnerId = body.ownerId;
       const execIdempotencyKey = body.idempotencyKey;
       metrics.ownerId = execOwnerId;
+
+      // Execute-time policy re-check (P1 fix): the token was minted at evaluate
+      // time - velocity, duplicates and policy may have drifted since. The gate
+      // disposes again right before money moves. Idempotent REPLAYS (same
+      // owner+key already settled) skip the re-check and return the cached
+      // receipt below - a replay is not a new money-moving decision.
+      const isReplay = await ledger.isKnownIdempotencyKey(execOwnerId, execIdempotencyKey);
+      if (!isReplay) {
+        const execReEval = evaluatePolicy({
+          ownerId: execOwnerId,
+          proposal: parsedProposal.data,
+          trustedVendors: defaultTrustedVendors,
+          isDuplicateInvoice: settledInvoices.has(parsedProposal.data.invoiceId),
+          hourlySpentMinor: await getHourlySpentMinor(execOwnerId),
+          policyVersion: 'v2026.11',
+          idempotencyKey: execIdempotencyKey,
+        });
+        if (execReEval.state !== 'APPROVED') {
+          return reply(422, {
+            success: false,
+            error: 'POLICY_DRIFTED',
+            decision: toPublicPolicyDecision(execReEval),
+            toastMessage: `Gate re-ran at execute-time: ${execReEval.state} (${execReEval.reasonCode})`,
+          });
+        }
+      }
+
       const result: SettlementResult = await recordSpan(
         'ledger.settleOrder',
         () =>
@@ -615,7 +736,12 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       );
 
       if (!result.success) {
-        const statusCode = result.error === 'FORBIDDEN_CAPABILITY' ? 403 : 422;
+        const statusCode =
+          result.error === 'FORBIDDEN_CAPABILITY'
+            ? 403
+            : result.error === 'IDEMPOTENCY_CONFLICT'
+              ? 409
+              : 422;
         return reply(statusCode, result);
       }
 
@@ -625,12 +751,11 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       }
 
       settledInvoices.add(parsedProposal.data.invoiceId);
-      recordSettlementVelocity(body.ownerId, Number(parsedProposal.data.grandTotalMinor));
-      auditEvents.unshift({
+      pushAudit({
         id: `evt-${randomUUID().slice(0, 8)}`,
         timestamp: new Date().toISOString(),
         action: 'EXECUTE',
-        actor: body.ownerId,
+        actor: execOwnerId,
         invoiceId: parsedProposal.data.invoiceId,
         vendor: parsedProposal.data.vendorName,
         amountMinor: Number(parsedProposal.data.grandTotalMinor),
@@ -693,13 +818,13 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         proposal: record.proposal,
         trustedVendors: record.trustedVendors,
         isDuplicateInvoice: settledInvoices.has(record.proposal.invoiceId),
-        hourlySpentMinor: Math.max(record.hourlySpentMinor, getHourlySpentMinor(record.ownerId)),
+        hourlySpentMinor: Math.max(record.hourlySpentMinor, await getHourlySpentMinor(record.ownerId)),
         policyVersion: record.policyVersion,
         idempotencyKey: record.idempotencyKey,
       });
 
       if (reEval.state === 'REJECTED') {
-        auditEvents.unshift({
+        pushAudit({
           id: `evt-${randomUUID().slice(0, 8)}`,
           timestamp: new Date().toISOString(),
           action: 'HITL_APPROVE',
@@ -721,7 +846,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       }
 
       if (reEval.state === 'HOLD' && reEval.reasonCode !== record.initialReasonCode) {
-        auditEvents.unshift({
+        pushAudit({
           id: `evt-${randomUUID().slice(0, 8)}`,
           timestamp: new Date().toISOString(),
           action: 'HITL_APPROVE',
@@ -767,7 +892,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       }
 
       settledInvoices.add(record.proposal.invoiceId);
-      recordSettlementVelocity(record.ownerId, Number(record.proposal.grandTotalMinor));
 
       let paypalOrderId = `PP-SBX-${settlementResult.settlement.settlementId.slice(0, 8).toUpperCase()}`;
       let paypalPayload: Record<string, unknown> | undefined;
@@ -791,7 +915,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         matchedTx.paypalOrderId = paypalOrderId;
       }
 
-      auditEvents.unshift({
+      pushAudit({
         id: `evt-${randomUUID().slice(0, 8)}`,
         timestamp: new Date().toISOString(),
         action: 'HITL_APPROVE',
@@ -822,9 +946,19 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         return reply(400, { success: false, error: 'MISSING_QR_CODE' });
       }
 
+      // Brute-force damper: 64-bit codes + a hard per-code rate limit.
+      const hitlRetryAfterSec = checkRateLimit(`hitl:${body.singleUseCode}`);
+      if (hitlRetryAfterSec !== null) {
+        return reply(429, { success: false, error: 'RATE_LIMITED', retryAfterSeconds: hitlRetryAfterSec }, { 'retry-after': String(hitlRetryAfterSec) });
+      }
+
       // 1. Lookup: unknown code -> 404.
       const approvalRecord = qrApprovals.get(body.singleUseCode);
       if (!approvalRecord) {
+        return reply(404, { success: false, error: 'QR_CODE_NOT_FOUND' });
+      }
+      // 1b. Tenant isolation: cross-owner approval attempts are 404 (never reveal existence).
+      if (authedOwnerId !== null && approvalRecord.ownerId !== authedOwnerId) {
         return reply(404, { success: false, error: 'QR_CODE_NOT_FOUND' });
       }
       // 2. Replay protection: consumed or in-flight code -> 409 Conflict.
@@ -841,6 +975,9 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         const result = await settleApprovedQrRecord(approvalRecord);
         if (result.statusCode === 200) {
           approvalRecord.used = true;
+          if (durability) {
+            void durability.markQrUsed(body.singleUseCode).catch(() => {});
+          }
         }
         return result;
       } finally {
@@ -857,11 +994,18 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
     // 6. Agent route: the LLM proposes, the deterministic gate disposes.
     if (options.method === 'POST' && options.url === '/v1/agent/run') {
       const body = (options.payload ?? {}) as Partial<AgentRunRequestPayload>;
-      const retryAfterSec = checkRateLimit(`agent:${body.ownerId ?? 'anon'}`);
+      const retryAfterSec = checkRateLimit(`agent:${authedOwnerId ?? (typeof body.ownerId === 'string' ? body.ownerId : 'anon')}`);
       if (retryAfterSec !== null) {
         return reply(429, { error: 'RATE_LIMITED', retryAfterSeconds: retryAfterSec }, { 'retry-after': String(retryAfterSec) });
       }
-      const ownerId = body.ownerId;
+      const resolvedOwnerId = resolveOwnerId(body.ownerId);
+      if (resolvedOwnerId === null && body.ownerId !== undefined) {
+        return reply(403, {
+          error: 'FORBIDDEN_OWNER',
+          detail: 'ownerId does not match the authenticated API key.',
+        });
+      }
+      const ownerId = resolvedOwnerId;
       const invoiceText = typeof body.invoiceText === 'string' ? body.invoiceText : '';
       const goal = typeof body.goal === 'string' && body.goal.trim().length > 0 ? body.goal.trim() : 'Pay this vendor invoice.';
       const idempotencyKey = body.idempotencyKey ?? `agent_${randomUUID().slice(0, 8)}`;
@@ -973,7 +1117,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         proposal: run.proposal,
         trustedVendors: defaultTrustedVendors,
         isDuplicateInvoice: settledInvoices.has(run.proposal.invoiceId),
-        hourlySpentMinor: getHourlySpentMinor(ownerId),
+        hourlySpentMinor: await getHourlySpentMinor(ownerId),
         policyVersion,
         idempotencyKey,
       });
@@ -982,7 +1126,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         return reply(200, { decision, thoughts, proposal: run.proposal, model: provider, roundsUsed: run.roundsUsed });
       }
 
-      auditEvents.unshift({
+      pushAudit({
         id: `evt-${randomUUID().slice(0, 8)}`,
         timestamp: new Date().toISOString(),
         action: 'AGENT_RUN',
@@ -996,19 +1140,23 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       });
 
       if (decision.state === 'HOLD') {
-        const qrCode = `PG-${randomUUID().slice(0, 4).toUpperCase()}-${randomUUID().slice(0, 4).toUpperCase()}`;
-        qrApprovals.set(qrCode, {
+        const qrCode = newQrCode();
+        const qrRecord: QrApprovalRecord = {
           code: qrCode,
           ownerId,
           proposal: run.proposal,
           idempotencyKey,
           policyVersion,
           trustedVendors: defaultTrustedVendors,
-          hourlySpentMinor: getHourlySpentMinor(ownerId),
+          hourlySpentMinor: await getHourlySpentMinor(ownerId),
           initialReasonCode: decision.reasonCode,
           expiresAtMs: Date.now() + 10 * 60_000,
           used: false,
-        });
+        };
+        qrApprovals.set(qrCode, qrRecord);
+        if (durability) {
+          void durability.saveQrApproval(qrRecord).catch(() => {});
+        }
         transactions.unshift({
           id: `tx-${randomUUID().slice(0, 8)}`,
           vendor: run.proposal.vendorName,
@@ -1046,7 +1194,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       }
 
       settledInvoices.add(run.proposal.invoiceId);
-      recordSettlementVelocity(ownerId, Number(run.proposal.grandTotalMinor));
 
       let paypalOrderId = `PP-SBX-${settlement.settlement.settlementId.slice(0, 8).toUpperCase()}`;
       let paypalPayload: Record<string, unknown> | null = null;
@@ -1113,17 +1260,21 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         return reply(409, { success: false, error: 'TRANSACTION_ALREADY_FINALIZED', transaction: tx });
       }
 
+      // Identity comes from the API key in authed mode; demo fallback stays
+      // pinned to the seed owner for backward compatibility.
+      const txOwnerId = authedOwnerId ?? 'owner_northstar';
+
       // Atomically claim the transaction before any await to prevent concurrent double-execution.
       tx.canApproveReject = false;
 
       let settled = false;
       try {
         const reEval = evaluatePolicy({
-          ownerId: 'owner_northstar',
+          ownerId: txOwnerId,
           proposal: tx.proposal,
           trustedVendors: defaultTrustedVendors,
           isDuplicateInvoice: settledInvoices.has(tx.proposal.invoiceId),
-          hourlySpentMinor: getHourlySpentMinor('owner_northstar'),
+          hourlySpentMinor: await getHourlySpentMinor(txOwnerId),
           policyVersion: 'v2026.11',
           idempotencyKey: `idem_tx_${tx.id}`,
         });
@@ -1141,7 +1292,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
           reEval.state === 'APPROVED'
             ? reEval.approvedToken
             : issueApprovedToken({
-              ownerId: 'owner_northstar',
+              ownerId: txOwnerId,
               proposal: tx.proposal,
               idempotencyKey: `idem_tx_${tx.id}`,
               policyVersion: 'v2026.11',
@@ -1150,7 +1301,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
 
         capabilityVault.set(freshToken.approvalId, freshToken);
         const settlementResult = await ledger.settleOrder({
-          ownerId: 'owner_northstar',
+          ownerId: txOwnerId,
           proposal: tx.proposal,
           token: freshToken,
           idempotencyKey: `idem_tx_${tx.id}`,
@@ -1162,7 +1313,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
 
         settled = true;
         settledInvoices.add(tx.proposal.invoiceId);
-        recordSettlementVelocity('owner_northstar', Number(tx.proposal.grandTotalMinor));
         if (tx.qrCode) {
           const qrRec = qrApprovals.get(tx.qrCode);
           if (qrRec) qrRec.used = true;
@@ -1179,11 +1329,11 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         tx.canApproveReject = false;
         tx.paypalOrderId = paypalOrderId;
 
-        auditEvents.unshift({
+        pushAudit({
           id: `evt-${randomUUID().slice(0, 8)}`,
           timestamp: new Date().toISOString(),
           action: 'TX_APPROVE',
-          actor: 'Jordan Diaz (Finance Admin)',
+          actor: authedOwnerId !== null ? `key:${authedOwnerId}` : 'Jordan Diaz (Finance Admin)',
           invoiceId: tx.invoiceNumber,
           vendor: tx.vendor,
           amountMinor: tx.amountMinor,
@@ -1225,11 +1375,11 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         if (qrRec) qrRec.used = true;
       }
 
-      auditEvents.unshift({
+      pushAudit({
         id: `evt-${randomUUID().slice(0, 8)}`,
         timestamp: new Date().toISOString(),
         action: 'TX_REJECT',
-        actor: 'Jordan Diaz (Finance Admin)',
+        actor: authedOwnerId !== null ? `key:${authedOwnerId}` : 'Jordan Diaz (Finance Admin)',
         invoiceId: tx.invoiceNumber,
         vendor: tx.vendor,
         amountMinor: tx.amountMinor,
@@ -1278,6 +1428,73 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       return reply(200, { events: auditEvents });
     }
 
+    // 9. PayPal Webhook Receiver (public; PayPal's verified signature is the identity).
+    // Reconciliation source of truth: rail state must eventually match the ledger.
+    if (options.method === 'POST' && options.url === '/v1/webhooks/paypal') {
+      if (!serverOptions.paypalWebhook) {
+        return reply(503, { error: 'WEBHOOK_NOT_CONFIGURED', detail: 'PayPal client + PAYPAL_WEBHOOK_ID required.' });
+      }
+      if (!durability) {
+        // Rail state is only trustworthy if it survives restarts - fail closed.
+        return reply(503, { error: 'WEBHOOKS_REQUIRE_DURABLE_STORE', detail: 'PostgreSQL durability required for webhook reconciliation.' });
+      }
+
+      const verify = await verifyPayPalWebhookSignature(serverOptions.paypalWebhook, {
+        headers: {
+          authAlgo: options.headers?.['paypal-auth-algo'],
+          certUrl: options.headers?.['paypal-cert-url'],
+          transmissionId: options.headers?.['paypal-transmission-id'],
+          transmissionSig: options.headers?.['paypal-transmission-sig'],
+          transmissionTime: options.headers?.['paypal-transmission-time'],
+        },
+        event: options.payload,
+      });
+      if (!verify.verified) {
+        // Fail closed: anything that is not provably PayPal is rejected.
+        return reply(401, { error: 'WEBHOOK_VERIFICATION_FAILED', reason: verify.reason });
+      }
+
+      const event: PayPalWebhookEvent = verify.event;
+      const persistResult = await durability.saveRailEvent(event);
+      if (persistResult === 'duplicate') {
+        return reply(200, { status: 'duplicate_ignored', eventId: event.id });
+      }
+
+      const action = classifyCaptureEvent(event.event_type);
+      const referenceId = typeof event.resource?.reference_id === 'string' ? event.resource.reference_id : undefined;
+      const railUpdate = await durability.applyRailAction({ referenceId, action });
+
+      pushAudit({
+        id: `evt-${randomUUID().slice(0, 8)}`,
+        timestamp: new Date().toISOString(),
+        action: 'EVALUATE',
+        actor: 'paypal-webhook',
+        invoiceId: referenceId ?? (typeof event.resource?.id === 'string' ? event.resource.id : 'unknown'),
+        vendor: 'PayPal rail',
+        amountMinor: 0,
+        decisionState: action,
+        reasonCode: event.event_type ?? 'UNKNOWN_EVENT',
+        detail: `Webhook ${event.id} (${event.event_type}) verified; ${railUpdate.updated} ledger entr${railUpdate.updated === 1 ? 'y' : 'ies'} updated to ${action}.`,
+      });
+
+      return reply(200, { status: 'processed', action, ledgerEntriesUpdated: railUpdate.updated });
+    }
+
+    // 10. Reconciliation report (authed): where ledger and rail disagree.
+    if (options.method === 'GET' && options.url === '/v1/reconciliation') {
+      if (!durability) {
+        return reply(200, {
+          mode: 'in_memory',
+          detail: 'Durable reconciliation requires PostgreSQL; in-memory mode has no rail state to reconcile.',
+          unconfirmedEntries: [],
+          failedOrRefundedEntries: [],
+          recentEvents: [],
+        });
+      }
+      const report = await durability.getRailStateReport();
+      return reply(200, { mode: 'postgres', ...report });
+    }
+
     return reply(404, { error: 'NOT_FOUND', path: options.url });
   }
 
@@ -1287,6 +1504,22 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
     qrApprovals,
     inject: <T = unknown>(options: InjectOptions) =>
       handleRequest(options) as Promise<InjectResponse<T>>,
+    hydrate: async () => {
+      if (!durability) {
+        return;
+      }
+      try {
+        const pending = await durability.loadPendingQrApprovals();
+        for (const record of pending) {
+          if (!qrApprovals.has(record.code)) {
+            qrApprovals.set(record.code, record);
+          }
+        }
+      } catch {
+        // Fail visible at boot via log below; the server still starts.
+        console.error('QR approval hydration from durable store failed; starting with empty approvals.');
+      }
+    },
     listen: (port = 4000) =>
       new Promise((resolve) => {
         const httpServer: Server = createServer(
@@ -1330,11 +1563,31 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
                 const url = rawUrl.split('?')[0] || '/';
                 const incomingRequestId = req.headers['x-request-id'];
                 const requestId = Array.isArray(incomingRequestId) ? incomingRequestId[0] : incomingRequestId;
+                // Forward identity + webhook-signature headers (lowercased by Node).
+                const forwardedHeaders: Record<string, string> = {};
+                const FORWARDABLE = [
+                  'authorization',
+                  'paypal-auth-algo',
+                  'paypal-cert-url',
+                  'paypal-transmission-id',
+                  'paypal-transmission-sig',
+                  'paypal-transmission-time',
+                ] as const;
+                for (const name of FORWARDABLE) {
+                  const value = req.headers[name];
+                  const first = Array.isArray(value) ? value[0] : value;
+                  if (typeof first === 'string') {
+                    forwardedHeaders[name] = first;
+                  }
+                }
                 const response = await handleRequest({
                   method,
                   url,
                   payload,
-                  ...(requestId ? { headers: { 'x-request-id': requestId } } : {}),
+                  headers: {
+                    ...(requestId ? { 'x-request-id': requestId } : {}),
+                    ...forwardedHeaders,
+                  },
                 });
 
                 res.writeHead(response.statusCode, response.headers);

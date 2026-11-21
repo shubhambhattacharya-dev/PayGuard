@@ -8,7 +8,7 @@ import { KpiStrip } from '../../components/KpiStrip';
 import { INITIAL_TRANSACTIONS } from '../../lib/mockData';
 import { PolicyReasonCode, Transaction, TransactionStatus } from '../../lib/types';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+const API_URL = '/api/payguard';
 
 export default function OverviewPage() {
   const [transactions, setTransactions] = useState<Transaction[]>(INITIAL_TRANSACTIONS);

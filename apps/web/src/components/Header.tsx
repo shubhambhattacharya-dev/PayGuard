@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { CheckCircle2, PanelLeftOpen, X } from 'lucide-react';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? (typeof window !== 'undefined' ? '' : 'http://localhost:4000');
+const API_URL = '/api/payguard';
 
 interface HeaderProps {
   toastMessage?: string | null | undefined;
