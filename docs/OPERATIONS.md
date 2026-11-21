@@ -108,3 +108,13 @@ audit trail for the affected invoice -> Render logs for the decision id.
 - **Free-tier instance limits:** Render free spins down (~cold starts) and
   its Postgres expires in ~30 days — see §3 for backups or move to a managed
   PG before any money-like demo.
+
+### 7b. Accepted dependency risk (review with each zod major)
+
+`pnpm audit` reports 1 high on `zod@3.25.76` (GHSA-mrhx-c7xc-m3w5 — memory
+exhaustion on oversized strings; patched only in zod >=4.6.6). Accepted for
+now because the exploit path is closed at the boundary: 1 MiB hard body cap
+(server.ts), 16k/500 char input caps, `.strict()` schemas, and the money
+contract (`order.ts`) uses zod-3 internal plumbing for its branded types —
+a zod-4 migration is a deliberate money-kernel task, not a drive-by bump.
+Mitigation stands until the migration is scheduled with tests.
