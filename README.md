@@ -128,19 +128,42 @@ PayGuard decouples the probabilistic language model from the deterministic finan
 PayGuard includes an offline-executable evaluation suite ensuring zero regressions:
 ```text
 ✓ packages/contracts: 69 passing (Zod schemas, ISO-4217, BigInt cents arithmetic)
-✓ apps/api:           51 passing
-  ├── modules/agent/runner.spec.ts   (ReAct loop, 4-round cap, injection resilience)
-  ├── server-agent.spec.ts           (Agent execution & thought streaming)
+✓ apps/api:           86 passing (incl. 4 PostgresLedger specs against a live PG service in CI)
+  ├── server-auth.spec.ts            (API-key gate, tenant isolation, 401/403 boundaries)
   ├── server.spec.ts                 (QR TOCTOU re-evaluation & prompt-injection detection)
+  ├── server-agent.spec.ts           (Agent execution & thought streaming)
+  ├── modules/agent/runner.spec.ts   (ReAct loop, 4-round cap, injection resilience)
+  ├── modules/paypal/webhooks.spec.ts(Signature verification fails closed, idempotent rail events)
   ├── modules/paypal/paypal.spec.ts  (OAuth2 caching, 401 refresh, 429 backoff)
   ├── modules/paypal/executor.spec.ts(Branded capability token boundary)
   ├── modules/policy/gate.spec.ts    (Deterministic $100 financial auto-execution boundary)
   ├── modules/policy/quote-matcher   (Character-offset quote verification)
-  └── modules/ledger/ledger.spec.ts  (Double-entry ledger, concurrency locks)
+  ├── modules/ledger/postgres-ledger (FOR UPDATE, idempotency, in-txn velocity + duplicate guards)
+  └── modules/ledger/ledger.spec.ts  (In-memory ledger, concurrency locks)
 ✓ apps/web:            4 passing     (KPI Strip & Policy Inspector components)
 
-Total: 124 unit/integration tests + 18 golden eval cases passing (100% Green).
+Total: 159 unit/integration tests + 18 golden eval cases passing (100% Green).
 ```
+
+---
+
+## 5b. Production Hardening (Nov 2026)
+
+The audit P0/P1 findings are fixed on this branch. The money APIs **never run unauthenticated**:
+
+| Concern | Behavior |
+| --- | --- |
+| **AuthN/AuthZ** | `PAYGUARD_API_KEYS="apiKey:ownerId,..."` (CSV). Every `/v1` route requires `Authorization: Bearer <key>`. Identity comes from the key only — client-supplied `ownerId` mismatches get `403 FORBIDDEN_OWNER`; cross-tenant HITL approval gets `404`. Health routes and the webhook receiver are the only public paths. |
+| **Fail-closed boot** | With neither keys nor `PAYGUARD_AUTH_DISABLED=true`, the API **refuses to start**. Demo mode must be an explicit opt-out. |
+| **Browser ↔ API** | The Next.js dashboard proxies everything through a server-side route (`/api/payguard/[[...path]]`) using `PAYGUARD_API_URL` + `PAYGUARD_API_KEY`; the API key never ships to client JavaScript. |
+| **PayPal webhooks** | `POST /v1/webhooks/paypal` verifies every transmission through PayPal's `/v1/notifications/verify-webhook-signature` (plus a cert-URL allowlist) and fails closed. Verified events persist idempotently to `rail_events` and drive ledger rail-state transitions (`SETTLED → RAIL_CONFIRMED / RAIL_FAILED / RAIL_REFUNDED`). Requires PostgreSQL. |
+| **Reconciliation** | `GET /v1/reconciliation` (authed) reports entries the rail never confirmed (>1h unconfirmed) and failed/refunded captures. |
+| **Velocity race** | The hourly cap is now enforced **inside** the settle transaction (`SELECT ... FOR UPDATE` + committed-settlements SUM), so parallel executes can never collectively breach it. `/v1/execute` also re-runs the policy gate (drift check) before money moves; idempotent replays short-circuit. |
+| **Duplicate invoices** | Global unique index on `settled_invoices(invoice_id)` + atomic in-transaction insert: the same invoice can never settle twice, even under different idempotency keys (restart-safe, unlike the old in-memory set). |
+| **Durable evidence** | Audit events, pending QR approvals (restart-survivable) and rail events persist to PostgreSQL (`002_production_hardening.sql`, auto-run at boot). In-memory demo mode stays best-effort. |
+| **Other** | QR codes now carry 64 bits of entropy + per-code rate limit; `/v1/evaluate` and `/v1/hitl/approve` are rate-limited; authed CORS defaults restrictive; Gemini API key moved from URL query to header; idempotency-key conflicts return typed `409 IDEMPOTENCY_CONFLICT` instead of an untyped 500. |
+
+Demo mode (auth disabled) still boots fully in-memory for the hackathon walkthrough; durable mode (`DATABASE_URL` + keys) is the production posture.
 
 ---
 

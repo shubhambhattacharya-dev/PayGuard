@@ -164,10 +164,11 @@ function createGeminiChatFn(apiKey: string, models: readonly string[], fetchFn: 
     for (const model of models) {
       for (let attempt = 0; attempt < 2; attempt++) {
         const res = await timedFetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
           {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            // Key goes in a header, never in the URL query (no leak into logs/proxies).
+            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
             body: JSON.stringify({
               contents: [{ role: 'user', parts: [{ text: flattenForGemini(messages) }] }],
               generationConfig: { temperature: 0, maxOutputTokens: 2048 },

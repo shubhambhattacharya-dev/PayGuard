@@ -68,7 +68,7 @@ describe.skipIf(!pgReachable)('PostgresLedger (Ticket 1 Red-First TDD: SELECT FO
   });
 
   beforeEach(async () => {
-    await pool.query('TRUNCATE TABLE ledger_entries, ledger_accounts CASCADE');
+    await pool.query('TRUNCATE TABLE ledger_entries, ledger_accounts, settled_invoices CASCADE');
     await ledger.seedAccount(ownerId, 10000); // $100.00
   });
 
@@ -153,7 +153,7 @@ describe.skipIf(!pgReachable)('PostgresLedger (Ticket 1 Red-First TDD: SELECT FO
     expect(await ledger.getBalance(ownerId)).toBe(2000);
   });
 
-  it('rejects IDEMPOTENCY_KEY_CONFLICT when reusing an idempotency key for a different proposal', async () => {
+  it('rejects IDEMPOTENCY_CONFLICT (typed result) when reusing an idempotency key for a different proposal', async () => {
     const p1 = makeProposal('INV-PG-CONFLICT-1', 3000);
     const p2 = makeProposal('INV-PG-CONFLICT-2', 4000);
 
@@ -180,14 +180,118 @@ describe.skipIf(!pgReachable)('PostgresLedger (Ticket 1 Red-First TDD: SELECT FO
     });
     expect(first.success).toBe(true);
 
-    await expect(
-      ledger.settleOrder({
-        ownerId,
-        proposal: p2,
-        token: t2,
-        idempotencyKey: 'pg-conflict-key',
-      }),
-    ).rejects.toThrow('IDEMPOTENCY_KEY_CONFLICT');
+    // Production hardening: key conflicts are now a typed error result (HTTP 409),
+    // not a thrown error (which surfaced as an untyped HTTP 500).
+    const conflict = await ledger.settleOrder({
+      ownerId,
+      proposal: p2,
+      token: t2,
+      idempotencyKey: 'pg-conflict-key',
+    });
+    expect(conflict).toEqual({ success: false, error: 'IDEMPOTENCY_CONFLICT' });
     expect(await ledger.getBalance(ownerId)).toBe(7000);
+  });
+
+  describe('Production hardening guards (migration 002)', () => {
+    // $200/hour velocity cap wired like production main.ts.
+    let cappedLedger: PostgresLedger;
+    const cappedOwner = `${ownerId}_capped`;
+
+    beforeAll(() => {
+      cappedLedger = new PostgresLedger(pool, 20000);
+    });
+
+    beforeEach(async () => {
+      await pool.query('TRUNCATE TABLE ledger_entries, ledger_accounts, settled_invoices CASCADE');
+      await cappedLedger.seedAccount(cappedOwner, 1_000_000); // $10,000 - balance never interferes
+    });
+
+    it('rejects a second settlement of the same invoice under a DIFFERENT idempotency key (DUPLICATE_INVOICE)', async () => {
+      const proposal = makeProposal('INV-PG-DUP-1', 3000);
+      const t1 = issueApprovedToken({
+        ownerId: cappedOwner,
+        proposal,
+        idempotencyKey: 'dup-key-1',
+        policyVersion: '1.0.0',
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      });
+      const t2 = issueApprovedToken({
+        ownerId: cappedOwner,
+        proposal,
+        idempotencyKey: 'dup-key-2',
+        policyVersion: '1.0.0',
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      });
+
+      const first = await cappedLedger.settleOrder({
+        ownerId: cappedOwner,
+        proposal,
+        token: t1,
+        idempotencyKey: 'dup-key-1',
+      });
+      expect(first.success).toBe(true);
+
+      const second = await cappedLedger.settleOrder({
+        ownerId: cappedOwner,
+        proposal,
+        token: t2,
+        idempotencyKey: 'dup-key-2',
+      });
+      expect(second).toEqual({ success: false, error: 'DUPLICATE_INVOICE' });
+      expect(await cappedLedger.getBalance(cappedOwner)).toBe(1_000_000 - 3000);
+    });
+
+    it('enforces the hourly velocity cap inside the settle transaction (VELOCITY_CAP_EXCEEDED)', async () => {
+      const settle = (invoiceId: string, amountMinor: number, key: string) =>
+        cappedLedger.settleOrder({
+          ownerId: cappedOwner,
+          proposal: makeProposal(invoiceId, amountMinor),
+          token: issueApprovedToken({
+            ownerId: cappedOwner,
+            proposal: makeProposal(invoiceId, amountMinor),
+            idempotencyKey: key,
+            policyVersion: '1.0.0',
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          }),
+          idempotencyKey: key,
+        });
+
+      const first = await settle('INV-PG-VEL-1', 15000, 'vel-key-1'); // $150
+      expect(first.success).toBe(true);
+
+      const second = await settle('INV-PG-VEL-2', 6000, 'vel-key-2'); // $60 -> $210 > $200 cap
+      expect(second).toEqual({ success: false, error: 'VELOCITY_CAP_EXCEEDED' });
+      expect(await cappedLedger.getBalance(cappedOwner)).toBe(1_000_000 - 15000);
+
+      // Under-cap order after the rejection still settles (cap is rolling, not blocking).
+      const third = await settle('INV-PG-VEL-3', 4000, 'vel-key-3'); // $40 -> $190 <= $200
+      expect(third.success).toBe(true);
+    });
+
+    it('parallel settles cannot collectively breach the velocity cap', async () => {
+      // 4 x $60 orders against a $200 cap: exactly 3 settle, 1 is rejected.
+      const results = await Promise.all(
+        [0, 1, 2, 3].map((i) =>
+          cappedLedger.settleOrder({
+            ownerId: cappedOwner,
+            proposal: makeProposal(`INV-PG-PAR-${i}`, 6000),
+            token: issueApprovedToken({
+              ownerId: cappedOwner,
+              proposal: makeProposal(`INV-PG-PAR-${i}`, 6000),
+              idempotencyKey: `par-key-${i}`,
+              policyVersion: '1.0.0',
+              expiresAt: new Date(Date.now() + 60_000).toISOString(),
+            }),
+            idempotencyKey: `par-key-${i}`,
+          }),
+        ),
+      );
+
+      const successes = results.filter((r) => r.success);
+      const failures = results.filter((r) => !r.success);
+      expect(successes).toHaveLength(3);
+      expect(failures).toHaveLength(1);
+      expect((failures[0] as { error: string }).error).toBe('VELOCITY_CAP_EXCEEDED');
+    });
   });
 });

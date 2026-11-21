@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { CheckCircle2, QrCode } from 'lucide-react';
 import { AppShell } from '../../components/AppShell';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+const API_URL = '/api/payguard';
 
 interface ApprovalItem {
   code: string;

@@ -13,7 +13,7 @@ import { LedgerWorkspaceSkeleton } from '../../components/Skeleton';
 import { INITIAL_TRANSACTIONS } from '../../lib/mockData';
 import { PolicyReasonCode, Transaction, TransactionStatus } from '../../lib/types';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+const API_URL = '/api/payguard';
 
 interface ApiTransactionRow {
   id: string;

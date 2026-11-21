@@ -5,7 +5,7 @@ import { History } from 'lucide-react';
 import { AppShell } from '../../components/AppShell';
 import { AuditListSkeleton } from '../../components/Skeleton';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+const API_URL = '/api/payguard';
 
 interface AuditEventRow {
   id: string;

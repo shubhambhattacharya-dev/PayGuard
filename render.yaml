@@ -15,8 +15,17 @@ services:
         sync: false
       - key: PAYPAL_CLIENT_SECRET
         sync: false
+      # CSV allowed: one webhook id per subscribed event type.
+      - key: PAYPAL_WEBHOOK_ID
+        sync: false
       - key: GEMINI_API_KEY
         sync: false
       - key: GROQ_API_KEY
+        sync: false
+      # Auth is mandatory: set a CSV of apiKey:ownerId pairs in the Render
+      # dashboard. The API refuses to boot without it (fail closed).
+      - key: PAYGUARD_API_KEYS
+        sync: false
+      - key: DATABASE_URL
         sync: false
 

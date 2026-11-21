@@ -5,7 +5,7 @@ import { ShieldAlert, Play } from 'lucide-react';
 import { AppShell } from '../../components/AppShell';
 import { LiveGatePanel } from '../../components/LiveGatePanel';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+const API_URL = '/api/payguard';
 
 function parseDollarsToMinor(raw: string): number {
   const cleaned = raw.trim();
