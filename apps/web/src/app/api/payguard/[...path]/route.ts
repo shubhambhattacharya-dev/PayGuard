@@ -38,6 +38,11 @@ async function forward(request: NextRequest, pathSegments: readonly string[]): P
     const text = await upstream.text();
     const response = new NextResponse(text, { status: upstream.status });
     response.headers.set('content-type', 'application/json; charset=utf-8');
+    // TEMPORARY diagnostic (remove after setup): what THIS function saw.
+    response.headers.set(
+      'x-proxy-diag',
+      `klen=${API_KEY.length};kpfx=${API_KEY.slice(4, 12)};tgt=${TARGET_BASE.includes('onrender') ? 'ok' : 'bad'}`,
+    );
     const requestId = upstream.headers.get('x-request-id');
     if (requestId) {
       response.headers.set('x-request-id', requestId);
