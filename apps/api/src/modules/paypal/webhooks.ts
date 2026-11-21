@@ -38,6 +38,8 @@ export interface PayPalWebhookEvent {
     readonly id?: string;
     readonly status?: string;
     readonly reference_id?: string;
+    /** Set at order creation; PayPal surfaces this on PAYMENT.CAPTURE.* events. */
+    readonly custom_id?: string;
     readonly supplementary_data?: {
       readonly related_ids?: {
         readonly order_id?: string;
@@ -50,6 +52,13 @@ export interface WebhookVerifyInput {
   readonly headers: PayPalWebhookHeaders;
   /** Parsed webhook_event JSON exactly as PayPal transmitted it. */
   readonly event: unknown;
+  /**
+   * The RAW request body as received (optional). When present it is spliced
+   * into the postback byte-for-byte: PayPal requires webhook_event to match
+   * the original transmission exactly — parse→re-serialize can fail
+   * verification per PayPal's integration guide.
+   */
+  readonly rawEventBody?: string;
 }
 
 export type WebhookVerifyOutcome =
@@ -106,21 +115,34 @@ export async function verifyPayPalWebhookSignature(
   }
 
   let lastOutcome: WebhookVerifyOutcome | null = null;
+  const verifyFields = {
+    auth_algo: h.authAlgo,
+    cert_url: h.certUrl,
+    transmission_id: h.transmissionId,
+    transmission_sig: h.transmissionSig,
+    transmission_time: h.transmissionTime,
+  };
+  const hasRawBody = typeof input.rawEventBody === 'string' && input.rawEventBody.trim().length > 0;
   for (const webhookId of config.webhookIds) {
     let verdict: string | undefined;
     try {
+      let requestInit: { body?: unknown; rawBody?: string };
+      if (hasRawBody) {
+        // Splice the ORIGINAL bytes in: webhook_event must match the
+        // transmitted body byte-for-byte, and parse→stringify may deviate.
+        const wrapper = JSON.stringify({ ...verifyFields, webhook_id: webhookId });
+        requestInit = {
+          rawBody: `${wrapper.slice(0, -1)},"webhook_event":${input.rawEventBody}}`,
+        };
+      } else {
+        requestInit = {
+          body: { ...verifyFields, webhook_id: webhookId, webhook_event: input.event },
+        };
+      }
       const result = await config.client.request<VerifySignatureApiResponse>({
         method: 'POST',
         path: '/v1/notifications/verify-webhook-signature',
-        body: {
-          auth_algo: h.authAlgo,
-          cert_url: h.certUrl,
-          transmission_id: h.transmissionId,
-          transmission_sig: h.transmissionSig,
-          transmission_time: h.transmissionTime,
-          webhook_id: webhookId,
-          webhook_event: input.event,
-        },
+        ...requestInit,
       });
       if (!result.ok) {
         return { verified: false, reason: 'PAYPAL_UNREACHABLE' };
