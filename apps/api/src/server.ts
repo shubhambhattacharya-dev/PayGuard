@@ -457,15 +457,14 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       const bearer = typeof authHeader === 'string' && authHeader.startsWith('Bearer ')
         ? authHeader.slice(7).trim()
         : '';
-      const keyOwner = bearer.length > 0 ? serverOptions.auth.keys.get(bearer) : undefined;
+      // Clients may send either the bare key or the full "key:ownerId" env
+      // value — strip the owner suffix for lookup so both forms authenticate.
+      const lookupKey = bearer.includes(':') ? bearer.slice(0, bearer.indexOf(':')).trim() : bearer;
+      const keyOwner = lookupKey.length > 0 ? serverOptions.auth.keys.get(lookupKey) : undefined;
       if (!keyOwner) {
-        // TEMPORARY diagnostic (remove after setup): what the API actually received.
-        const mapKey = [...serverOptions.auth.keys.keys()][0] ?? '';
         return reply(401, {
           error: 'UNAUTHENTICATED',
           detail: 'Valid Authorization: Bearer <api-key> required on /v1 routes.',
-        }, {
-          'x-auth-diag': `got=${typeof authHeader === 'string'};len=${authHeader?.length ?? 0};bearer=${bearer};mapKey=${mapKey};codes=${[...(bearer ?? '')].slice(0, 12).map((c) => c.charCodeAt(0)).join(',')}`,
         });
       }
       authedOwnerId = keyOwner;

@@ -58,16 +58,6 @@ function rawRequest(
         });
       },
     );
-    // TEMPORARY diagnostic (remove after setup)
-    console.log(
-      `[raw-req] url=${url} method=${method} hdrs=${JSON.stringify({
-        ...headers,
-        authorization: headers.authorization ? `${headers.authorization.slice(0, 16)}...len${headers.authorization.length}` : 'MISSING',
-      })}`,
-    );
-    req.on('response', (res2: IncomingMessage) => {
-      console.log(`[raw-res] status=${res2.statusCode} server=${res2.headers.server ?? 'n/a'} diag=${res2.headers['x-auth-diag'] ?? 'absent'} reqid=${res2.headers['x-request-id'] ?? 'absent'}`);
-    });
     req.on('error', reject);
     req.setTimeout(45_000, () => req.destroy(new Error('upstream timeout')));
     if (body !== undefined) {
