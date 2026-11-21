@@ -42,6 +42,8 @@ export interface InjectOptions {
   readonly url: string;
   readonly payload?: unknown;
   readonly headers?: Record<string, string>;
+  /** Original request body bytes — webhook postback fidelity depends on it. */
+  readonly rawBody?: string;
 }
 
 export interface InjectResponse<T = unknown> {
@@ -1448,6 +1450,9 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
           transmissionTime: options.headers?.['paypal-transmission-time'],
         },
         event: options.payload,
+        ...(typeof options.rawBody === 'string' && options.rawBody.trim().length > 0
+          ? { rawEventBody: options.rawBody }
+          : {}),
       });
       if (!verify.verified) {
         // Fail closed: anything that is not provably PayPal is rejected.
@@ -1592,6 +1597,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
                   method,
                   url,
                   payload,
+                  ...(raw.trim().length > 0 ? { rawBody: raw } : {}),
                   headers: {
                     ...(requestId ? { 'x-request-id': requestId } : {}),
                     ...forwardedHeaders,
