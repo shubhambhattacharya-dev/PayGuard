@@ -465,7 +465,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
           error: 'UNAUTHENTICATED',
           detail: 'Valid Authorization: Bearer <api-key> required on /v1 routes.',
         }, {
-          'x-auth-diag': `got=${typeof authHeader === 'string'};len=${authHeader?.length ?? 0};pfx=${(authHeader ?? '').slice(0, 12)};mapSize=${serverOptions.auth.keys.size};mapPfx=${mapKey.slice(0, 12)};mapSfx=${mapKey.slice(-12)}`,
+          'x-auth-diag': `got=${typeof authHeader === 'string'};len=${authHeader?.length ?? 0};bearer=${bearer};mapKey=${mapKey};codes=${[...(bearer ?? '')].slice(0, 12).map((c) => c.charCodeAt(0)).join(',')}`,
         });
       }
       authedOwnerId = keyOwner;

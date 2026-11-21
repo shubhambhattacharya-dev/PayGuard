@@ -1,16 +1,80 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
+import { request as httpsRequest } from 'node:https';
+import type { IncomingMessage } from 'node:http';
 
 /**
  * Server-side proxy: the browser talks ONLY to this same-origin route; the
  * API key never ships to client JavaScript (two-app pattern: UI holds no
  * secrets). Forwards path segments verbatim to the PayGuard API.
+ *
+ * Uses raw node:https instead of global fetch: Next.js patches fetch in
+ * route handlers, and the patched layer was observed dropping the
+ * Authorization header on outbound calls (root cause of the 401 loop).
  */
 
 const TARGET_BASE = process.env.PAYGUARD_API_URL ?? 'http://localhost:4000';
 const API_KEY = process.env.PAYGUARD_API_KEY ?? '';
 
+// The proxy must execute on EVERY request — a cached route response would
+// freeze the first (possibly failed) upstream call forever.
+export const dynamic = 'force-dynamic';
+
 interface RouteContext {
   readonly params: Promise<{ readonly path: readonly string[] }>;
+}
+
+interface RawResponse {
+  readonly status: number;
+  readonly headers: Record<string, string>;
+  readonly text: string;
+}
+
+function rawRequest(
+  url: string,
+  method: string,
+  headers: Record<string, string>,
+  body: string | undefined,
+): Promise<RawResponse> {
+  return new Promise((resolve, reject) => {
+    const req = httpsRequest(
+      url,
+      { method, headers },
+      (res: IncomingMessage) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+        res.on('end', () => {
+          const flat: Record<string, string> = {};
+          for (const [key, value] of Object.entries(res.headers)) {
+            const first = Array.isArray(value) ? value[0] : value;
+            if (typeof first === 'string') {
+              flat[key.toLowerCase()] = first;
+            }
+          }
+          resolve({
+            status: res.statusCode ?? 502,
+            headers: flat,
+            text: Buffer.concat(chunks).toString('utf-8'),
+          });
+        });
+      },
+    );
+    // TEMPORARY diagnostic (remove after setup)
+    console.log(
+      `[raw-req] url=${url} method=${method} hdrs=${JSON.stringify({
+        ...headers,
+        authorization: headers.authorization ? `${headers.authorization.slice(0, 16)}...len${headers.authorization.length}` : 'MISSING',
+      })}`,
+    );
+    req.on('response', (res2: IncomingMessage) => {
+      console.log(`[raw-res] status=${res2.statusCode} server=${res2.headers.server ?? 'n/a'} diag=${res2.headers['x-auth-diag'] ?? 'absent'} reqid=${res2.headers['x-request-id'] ?? 'absent'}`);
+    });
+    req.on('error', reject);
+    req.setTimeout(45_000, () => req.destroy(new Error('upstream timeout')));
+    if (body !== undefined) {
+      req.write(body);
+    }
+    req.end();
+  });
 }
 
 async function forward(request: NextRequest, pathSegments: readonly string[]): Promise<NextResponse> {
@@ -29,21 +93,10 @@ async function forward(request: NextRequest, pathSegments: readonly string[]): P
   }
 
   try {
-    const upstream = await fetch(target, {
-      method: request.method,
-      headers,
-      ...(body !== undefined ? { body } : {}),
-      cache: 'no-store',
-    });
-    const text = await upstream.text();
-    const response = new NextResponse(text, { status: upstream.status });
+    const upstream = await rawRequest(target, request.method, headers, body);
+    const response = new NextResponse(upstream.text, { status: upstream.status });
     response.headers.set('content-type', 'application/json; charset=utf-8');
-    // TEMPORARY diagnostic (remove after setup): what THIS function saw.
-    response.headers.set(
-      'x-proxy-diag',
-      `klen=${API_KEY.length};kpfx=${API_KEY.slice(4, 12)};tgt=${TARGET_BASE.includes('onrender') ? 'ok' : 'bad'}`,
-    );
-    const requestId = upstream.headers.get('x-request-id');
+    const requestId = upstream.headers['x-request-id'];
     if (requestId) {
       response.headers.set('x-request-id', requestId);
     }
