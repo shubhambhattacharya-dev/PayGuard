@@ -63,6 +63,7 @@ function LoginForm() {
           <span className="text-slate-300">Password</span>
           <input
             type="password"
+            autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             autoFocus
