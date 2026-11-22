@@ -38,10 +38,11 @@ function formatMinorUsd(minor: number): string {
 }
 
 export function KpiStrip({ transactions }: { transactions?: Transaction[] }) {
-  let needsReviewText = '2 bills · $1,284.50';
-  let awaitingApprovalText = '2 bills · $1,284.50';
-  let autoExecutedText = '8 bills';
-  let blockedText = '2 bills';
+  // Zero-state defaults: never invent demo counts when no live data is loaded.
+  let needsReviewText = '0 bills · $0.00';
+  let awaitingApprovalText = '0 bills · $0.00';
+  let autoExecutedText = '0 bills';
+  let blockedText = '0 bills';
 
   if (transactions) {
     const reviewRows = transactions.filter((t) => t.status === 'Review required');

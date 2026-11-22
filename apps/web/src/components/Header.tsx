@@ -22,7 +22,7 @@ export function Header({
   inspectorOpen,
   onToggleInspector,
 }: HeaderProps) {
-  const [railState, setRailState] = useState<'checking' | 'sandbox' | 'simulated' | 'offline'>('checking');
+  const [railState, setRailState] = useState<'checking' | 'sandbox' | 'simulated' | 'demo' | 'offline'>('checking');
   const [latencyMs, setLatencyMs] = useState<number | null>(null);
   const [todayLabel, setTodayLabel] = useState<string>('');
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
@@ -65,11 +65,13 @@ export function Header({
     const started = performance.now();
     fetch(`${API_URL}/healthz`)
       .then((res) => (res.ok ? res.json() : null))
-      .then((data: { paypalSandboxReady?: boolean } | null) => {
+      .then((data: { paypalSandboxReady?: boolean; demoLedger?: boolean } | null) => {
         if (cancelled) return;
         setLatencyMs(Math.max(1, Math.round(performance.now() - started)));
         if (!data) {
           setRailState('offline');
+        } else if (data.demoLedger) {
+          setRailState('demo');
         } else {
           setRailState(data.paypalSandboxReady ? 'sandbox' : 'simulated');
         }
@@ -85,11 +87,13 @@ export function Header({
   const badge =
     railState === 'sandbox'
       ? { dot: 'bg-emerald-500 animate-pulse', label: 'PayPal Sandbox Connected' }
-      : railState === 'simulated'
-        ? { dot: 'bg-amber-500', label: 'Simulated Ledger (No PayPal Creds)' }
-        : railState === 'offline'
-          ? { dot: 'bg-rose-500', label: 'API Offline (Demo Seed)' }
-          : { dot: 'bg-slate-400 animate-pulse', label: 'Checking API...' };
+      : railState === 'demo'
+        ? { dot: 'bg-amber-500', label: 'In-Memory Demo Ledger (Not Durable)' }
+        : railState === 'simulated'
+          ? { dot: 'bg-amber-500', label: 'Simulated Ledger (No PayPal Creds)' }
+          : railState === 'offline'
+            ? { dot: 'bg-rose-500', label: 'API Offline — Live Data Unavailable' }
+            : { dot: 'bg-slate-400 animate-pulse', label: 'Checking API...' };
 
   return (
     <header className="min-h-14 bg-[#0b1210]/85 backdrop-blur-xl border-b border-[rgba(222,242,227,0.12)] px-4 sm:px-6 md:px-8 py-2 flex flex-wrap items-center justify-between gap-2 sticky top-0 z-20">

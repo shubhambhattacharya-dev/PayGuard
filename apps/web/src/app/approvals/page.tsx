@@ -36,7 +36,7 @@ function ApprovalsContent() {
       setApprovals(data.approvals ?? []);
       setError(null);
     } catch {
-      setError('API unreachable — start @payguard/api on port 4000 to view live QR approvals.');
+      setError('Live API unreachable — QR approvals could not be loaded.');
     } finally {
       setLoading(false);
     }

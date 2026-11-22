@@ -157,7 +157,7 @@ export function QrApprovalModal({
               onApproveSuccess(data.toastMessage ?? 'Gate re-ran, decision stood');
               onClose();
             } catch {
-              setErrorMsg('API unreachable — start @payguard/api on port 4000');
+              setErrorMsg('Live API unreachable — approval is unavailable right now.');
             } finally {
               setSubmitting(false);
             }

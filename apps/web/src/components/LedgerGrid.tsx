@@ -50,8 +50,19 @@ export function LedgerGrid({
         return 'bg-[#15211b] text-[#b8c4bb] border-[rgba(222,242,227,0.14)]';
       case 'REJECT_PROMPT_INJECTION':
       case 'REJECT_UNCATALOGUED_SKU':
+      case 'REJECT_PRICE_MISMATCH':
       case 'REJECT_MATH_MISMATCH':
+      case 'REJECT_DUPLICATE_INVOICE':
+      case 'REJECT_SCHEMA_INVALID':
+      case 'REJECT_TENANT_MISMATCH':
         return 'bg-[rgba(255,123,130,0.12)] text-[#ff959a] border-[rgba(255,123,130,0.28)]';
+      case 'HOLD_VELOCITY_LIMIT':
+      case 'HOLD_DAILY_CAP_EXCEEDED':
+      case 'HOLD_MANUAL_REVIEW':
+      case 'DEPENDENCY_UNAVAILABLE':
+        return 'bg-[#15211b] text-[#b8c4bb] border-[rgba(222,242,227,0.14)]';
+      default:
+        return 'bg-[#15211b] text-[#9aa9a0] border-[rgba(222,242,227,0.14)]';
     }
   };
 

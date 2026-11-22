@@ -61,7 +61,7 @@ export default function EvaluationsPage() {
       const json = await res.json();
       setEvalResult(JSON.stringify(json, null, 2));
     } catch {
-      setEvalResult('API unreachable — start @payguard/api on port 4000.');
+      setEvalResult('Live API unreachable — the policy gate sandbox is unavailable right now.');
     } finally {
       setBusy(false);
     }

@@ -19,6 +19,14 @@ interface PolicyInspectorProps {
   onApprove: (tx: Transaction) => void;
 }
 
+/** Parses "$142.00" / "$142" into a number; returns null for unknown values. */
+function parseCurrencyAmount(value: string): number | null {
+  const match = value.replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
+  if (!match) return null;
+  const parsed = Number(match[0]);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 export function PolicyInspector({ transaction, onOpenQr, onApprove, className = '' }: PolicyInspectorProps) {
   if (!transaction) {
     return (
@@ -28,6 +36,19 @@ export function PolicyInspector({ transaction, onOpenQr, onApprove, className = 
       </div>
     );
   }
+
+  const velocitySpent = parseCurrencyAmount(transaction.policyLimits.vendorVelocitySpent);
+  const velocityLimit = parseCurrencyAmount(transaction.policyLimits.vendorVelocityLimit);
+  const velocityPercent =
+    velocitySpent !== null && velocityLimit !== null && velocityLimit > 0
+      ? Math.min(100, Math.max(0, Math.round((velocitySpent / velocityLimit) * 100)))
+      : null;
+  const statusBadgeClass =
+    transaction.status === 'Paid'
+      ? 'bg-[rgba(40,187,131,0.14)] text-[#84e5b3] border-[rgba(40,187,131,0.3)]'
+      : transaction.status === 'Blocked'
+        ? 'bg-[rgba(255,123,130,0.14)] text-[#ff959a] border-[rgba(255,123,130,0.3)]'
+        : 'bg-[rgba(255,184,107,0.14)] text-[#ffc477] border-[rgba(255,184,107,0.3)]';
 
   return (
     <aside
@@ -45,7 +66,7 @@ export function PolicyInspector({ transaction, onOpenQr, onApprove, className = 
             <span className="font-mono">
               {transaction.invoiceNumber} · {transaction.dateFormatted}
             </span>
-            <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-[rgba(255,184,107,0.14)] text-[#ffc477] border border-[rgba(255,184,107,0.3)] shrink-0">
+            <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium border shrink-0 ${statusBadgeClass}`}>
               {transaction.status === 'Paid'
                 ? 'Settled'
                 : transaction.status === 'Blocked'
@@ -60,6 +81,11 @@ export function PolicyInspector({ transaction, onOpenQr, onApprove, className = 
           <h3 id="policy-checks-heading" className="text-xs font-semibold text-[#eaf0eb] uppercase tracking-wider mb-2.5">
             Policy checks
           </h3>
+          {transaction.policyChecks.length === 0 && (
+            <p className="text-[11px] text-[#9aa9a0] leading-relaxed">
+              No per-rule evidence payload was returned for this ledger row.
+            </p>
+          )}
           <ul className="space-y-3">
             {transaction.policyChecks.map((check, idx) => {
               const Icon =
@@ -89,6 +115,7 @@ export function PolicyInspector({ transaction, onOpenQr, onApprove, className = 
         </section>
 
         {/* Invoice Evidence (Dual Box: Green Verified vs Red Untrusted Injection) */}
+        {(transaction.verifiedQuote || transaction.untrustedInjection) && (
         <section aria-labelledby="invoice-evidence-heading" className="min-w-0">
           <h3 id="invoice-evidence-heading" className="text-xs font-semibold text-[#eaf0eb] uppercase tracking-wider mb-2">
             Invoice evidence
@@ -125,6 +152,7 @@ export function PolicyInspector({ transaction, onOpenQr, onApprove, className = 
             </div>
           )}
         </section>
+        )}
 
         {/* Policy Limits & Velocity Progress Bar */}
         <section aria-label="Policy limits and velocity" className="grid grid-cols-2 gap-3 p-3 bg-[#15211b]/80 backdrop-blur-sm rounded-xl border border-[rgba(222,242,227,0.12)] text-xs min-w-0">
@@ -137,13 +165,21 @@ export function PolicyInspector({ transaction, onOpenQr, onApprove, className = 
           </dl>
           <dl className="min-w-0">
             <dt className="text-[11px] text-[#9aa9a0] mb-0.5">Velocity (this vendor)</dt>
-            <dd className="text-xs font-bold text-[#eaf0eb] tabular-nums">
-              {transaction.policyLimits.vendorVelocitySpent} of {transaction.policyLimits.vendorVelocityLimit}
-            </dd>
-            <div className="w-full bg-[#0b1210] h-1.5 rounded-full mt-1.5 overflow-hidden">
-              <div className="bg-[#c8f169] h-1.5 rounded-full" style={{ width: '71%' }}></div>
-            </div>
-            <dd className="text-[10px] text-[#6e7d74] mt-1">{transaction.policyLimits.velocityWindow}</dd>
+            {velocityPercent !== null ? (
+              <>
+                <dd className="text-xs font-bold text-[#eaf0eb] tabular-nums">
+                  {transaction.policyLimits.vendorVelocitySpent} of {transaction.policyLimits.vendorVelocityLimit}
+                </dd>
+                <div className="w-full bg-[#0b1210] h-1.5 rounded-full mt-1.5 overflow-hidden">
+                  <div className="bg-[#c8f169] h-1.5 rounded-full" style={{ width: `${velocityPercent}%` }}></div>
+                </div>
+                <dd className="text-[10px] text-[#6e7d74] mt-1">{transaction.policyLimits.velocityWindow}</dd>
+              </>
+            ) : (
+              <dd className="text-[11px] text-[#9aa9a0] leading-relaxed mt-0.5">
+                Vendor velocity is not returned for this ledger row.
+              </dd>
+            )}
           </dl>
         </section>
 

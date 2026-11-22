@@ -156,6 +156,14 @@ export class PostgresLedger implements LedgerStore {
     }
   }
 
+  /** Invoice ids already settled, used to rehydrate the gate's duplicate guard. */
+  public async listSettledInvoiceIds(): Promise<string[]> {
+    const res = await this.pool.query<{ invoice_id: string }>(
+      `SELECT invoice_id FROM settled_invoices`,
+    );
+    return res.rows.map((row) => row.invoice_id);
+  }
+
   /** Real settlements for the UI transactions list (newest first). */
   public async listEntries(ownerId: string | null, limit = 100): Promise<{
     settlementId: string; vendorName: string; invoiceId: string; amountMinor: number; remainingBalanceMinor: number; status: string; settledAt: string;

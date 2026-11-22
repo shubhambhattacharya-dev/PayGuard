@@ -62,6 +62,9 @@ class FakeDurability implements DurableStore {
   async saveAuditEvent(event: AuditEvent): Promise<void> {
     this.auditLog.push(event);
   }
+  async loadAuditEvents(limit = 200): Promise<AuditEvent[]> {
+    return this.auditLog.slice(-limit);
+  }
   async saveQrApproval(record: QrApprovalRecord): Promise<void> {
     this.qrStore.set(record.code, record);
   }

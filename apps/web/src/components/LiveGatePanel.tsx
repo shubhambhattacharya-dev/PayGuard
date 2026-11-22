@@ -127,7 +127,7 @@ export function LiveGatePanel({ onAfterRun }: LiveGatePanelProps = {}) {
           ) : (
             <WifiOff className="w-3.5 h-3.5" aria-hidden="true" />
           )}
-          {backend === 'online' ? 'API connected' : backend === 'offline' ? 'API offline — start it with pnpm --filter @payguard/api start' : 'checking…'}
+          {backend === 'online' ? 'API connected' : backend === 'offline' ? 'API offline — live actions unavailable' : 'checking…'}
         </span>
       </div>
 

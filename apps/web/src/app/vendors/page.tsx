@@ -21,7 +21,7 @@ export default function VendorsPage() {
     fetch(`${API_URL}/v1/vendors`)
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
       .then((data: { vendors?: VendorRow[] }) => setVendors(data.vendors ?? []))
-      .catch(() => setError('API unreachable — start @payguard/api on port 4000 to load trusted vendors.'));
+      .catch(() => setError('Live API unreachable — trusted vendors could not be loaded.'));
   }, []);
 
   return (

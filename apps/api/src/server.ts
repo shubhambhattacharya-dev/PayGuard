@@ -209,6 +209,9 @@ export interface PayGuardServer {
 
 export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: BuildServerOptions = {}): PayGuardServer {
   const ledger = serverOptions.ledger ?? new InMemoryLedger();
+  // Durable PostgreSQL mode must never fall back to demo seed rows: real
+  // deployments should show only persisted settlements and approvals.
+  const isDurableLedger = ledger instanceof PostgresLedger;
   if (!serverOptions.ledger) {
     ledger.seedAccount('owner_northstar', initialSeedBalanceMinor);
     ledger.seedAccount('owner_1', initialSeedBalanceMinor);
@@ -269,21 +272,23 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       if (oldestKey) settledExecutionEnvelopes.delete(oldestKey);
     }
   };
-  const settledInvoices = new Set<string>(['INV-3150']);
-  const auditEvents: AuditEvent[] = [
-    {
-      id: 'evt-seed-1',
-      timestamp: '2026-11-01T09:14:00.000Z',
-      action: 'EVALUATE',
-      actor: 'policy-gate',
-      invoiceId: 'INV-2048',
-      vendor: 'Aster Cloud',
-      amountMinor: 84250,
-      decisionState: 'HOLD',
-      reasonCode: ReasonCode.HOLD_OVER_CAP,
-      detail: 'Example: $842.50 exceeds $100.00 auto-cap; single-use QR PG-7F3K-9D2L issued.',
-    },
-  ];
+  const settledInvoices = new Set<string>(isDurableLedger ? [] : ['INV-3150']);
+  const auditEvents: AuditEvent[] = isDurableLedger
+    ? []
+    : [
+        {
+          id: 'evt-seed-1',
+          timestamp: '2026-11-01T09:14:00.000Z',
+          action: 'EVALUATE',
+          actor: 'policy-gate',
+          invoiceId: 'INV-2048',
+          vendor: 'Aster Cloud',
+          amountMinor: 84250,
+          decisionState: 'HOLD',
+          reasonCode: ReasonCode.HOLD_OVER_CAP,
+          detail: 'Example: $842.50 exceeds $100.00 auto-cap; single-use QR PG-7F3K-9D2L issued.',
+        },
+      ];
   const catalog: CatalogStore = serverOptions.catalog ?? createCatalog();
 
   const defaultTrustedVendors = [
@@ -326,7 +331,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
     grandTotalMinor: amountMinor as OrderProposal['grandTotalMinor'],
   });
 
-  const transactions: LedgerTransactionRecord[] = [
+  const transactions: LedgerTransactionRecord[] = isDurableLedger ? [] : [
     {
       id: 'tx-1',
       vendor: 'Aster Cloud',
@@ -342,7 +347,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
     },
   ];
 
-  if (transactions[0]) {
+  if (!isDurableLedger && transactions[0]) {
     qrApprovals.set('PG-7F3K-9D2L', {
       code: 'PG-7F3K-9D2L',
       ownerId: 'owner_northstar',
@@ -526,12 +531,18 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
 
     if (options.method === 'GET' && (options.url === '/healthz' || options.url === '/health')) {
       const paypalSandboxReady = Boolean(serverOptions.paypalExecutor);
+      // 'postgres' means durable real ledger; 'in_memory' is an explicit demo
+      // fallback (seeded, lost on restart). The dashboard surfaces this so a
+      // demo deployment never masquerades as live financial data.
+      const ledgerStore = ledger instanceof PostgresLedger ? 'postgres' : 'in_memory';
       return reply(200, {
         status: 'ok',
         service: '@payguard/api',
         fiduciaryLaw: 'The LLM proposes; deterministic financial policies dispose.',
         paypalSandboxReady,
         executionMode: paypalSandboxReady ? 'paypal_sandbox' : 'in_memory_simulated',
+        ledgerStore,
+        demoLedger: ledgerStore === 'in_memory',
         timestamp: new Date().toISOString(),
       });
     }
@@ -613,10 +624,25 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         }
       }
 
-      // 2c. Vendor Payout Destination Change Check (server-authoritative account when known)
+      // 2c. Vendor Payout Destination Change Check. The trusted account is
+      // server-authoritative: a client-supplied "trustedAccount" is NEVER used
+      // as the baseline. Vendors without a registered account fail closed.
       if (body.vendorDestination) {
-        const expectedTrustedAccount =
-          defaultTrustedVendorAccounts[proposal.vendorName] ?? body.vendorDestination.trustedAccount;
+        const expectedTrustedAccount = defaultTrustedVendorAccounts[proposal.vendorName];
+        if (expectedTrustedAccount === undefined) {
+          return reply(200, {
+            decision: {
+              state: 'HOLD',
+              reasonCode: ReasonCode.HOLD_VENDOR_UNTRUSTED,
+              decisionId: randomUUID(),
+              evaluatedAt: new Date().toISOString(),
+            },
+            vendorDestination: {
+              trustedAccount: null,
+              invoiceAccount: body.vendorDestination.invoiceAccount,
+            },
+          });
+        }
         if (expectedTrustedAccount !== body.vendorDestination.invoiceAccount) {
           const decisionId = randomUUID();
           return reply(200, {
@@ -1291,19 +1317,35 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
     if (options.method === 'GET' && options.url === '/v1/transactions') {
       if (ledger instanceof PostgresLedger) {
         const entries = await ledger.listEntries(authedOwnerId);
-        return reply(200, {
-          transactions: entries.map((entry) => ({
-            id: entry.settlementId,
-            vendor: entry.vendorName,
-            invoiceNumber: entry.invoiceId,
-            amountFormatted: `$${(entry.amountMinor / 100).toFixed(2)}`,
-            amountMinor: entry.amountMinor,
-            status: 'Paid',
-            policyCode: 'AUTO_EXECUTED',
-            dateFormatted: new Date(entry.settledAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-            canApproveReject: false,
+        const nowMs = Date.now();
+        const pendingApprovals = Array.from(qrApprovals.values())
+          .filter((r) => !r.used && nowMs < r.expiresAtMs && (authedOwnerId === null || r.ownerId === authedOwnerId))
+          .map((r) => ({
+            id: `qr:${r.code}`,
+            vendor: r.proposal.vendorName,
+            invoiceNumber: r.proposal.invoiceId,
+            amountFormatted: `$${(Number(r.proposal.grandTotalMinor) / 100).toFixed(2)}`,
+            amountMinor: Number(r.proposal.grandTotalMinor),
+            status: 'Review required',
+            policyCode: r.initialReasonCode,
+            dateFormatted: 'Pending',
+            canApproveReject: true,
             proposal: null,
-          })),
+          }));
+        const settledRows = entries.map((entry) => ({
+          id: entry.settlementId,
+          vendor: entry.vendorName,
+          invoiceNumber: entry.invoiceId,
+          amountFormatted: `$${(entry.amountMinor / 100).toFixed(2)}`,
+          amountMinor: entry.amountMinor,
+          status: 'Paid',
+          policyCode: 'AUTO_EXECUTED',
+          dateFormatted: new Date(entry.settledAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+          canApproveReject: false,
+          proposal: null,
+        }));
+        return reply(200, {
+          transactions: [...pendingApprovals, ...settledRows],
           executionMode: serverOptions.paypalExecutor ? 'paypal_sandbox' : 'in_memory_simulated',
           paypalSandboxReady: Boolean(serverOptions.paypalExecutor),
           source: 'postgres',
@@ -1313,6 +1355,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         transactions,
         executionMode: serverOptions.paypalExecutor ? 'paypal_sandbox' : 'in_memory_simulated',
         paypalSandboxReady: Boolean(serverOptions.paypalExecutor),
+        source: 'in_memory_demo',
       });
     }
 
@@ -1322,7 +1365,33 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       if (txApproveRoleBlocked) {
         return txApproveRoleBlocked;
       }
-      const txId = txApproveMatch[1];
+      const txId = decodeURIComponent(txApproveMatch[1] ?? '');
+      if (txId.startsWith('qr:')) {
+        const qrCode = txId.slice(3);
+        const approvalRecord = qrApprovals.get(qrCode);
+        if (!approvalRecord || (authedOwnerId !== null && approvalRecord.ownerId !== authedOwnerId)) {
+          return reply(404, { success: false, error: 'TRANSACTION_NOT_FOUND' });
+        }
+        if (approvalRecord.used || inFlightQrCodes.has(qrCode)) {
+          return reply(409, { success: false, error: 'TRANSACTION_ALREADY_FINALIZED' });
+        }
+        if (Date.now() >= approvalRecord.expiresAtMs) {
+          return reply(410, { success: false, error: 'QR_CODE_EXPIRED' });
+        }
+        inFlightQrCodes.add(qrCode);
+        try {
+          const result = await settleApprovedQrRecord(approvalRecord);
+          if (result.statusCode === 200) {
+            approvalRecord.used = true;
+            if (durability) {
+              void durability.markQrUsed(qrCode).catch(() => {});
+            }
+          }
+          return result;
+        } finally {
+          inFlightQrCodes.delete(qrCode);
+        }
+      }
       const tx = transactions.find((t) => t.id === txId);
       if (!tx) {
         return reply(404, { success: false, error: 'TRANSACTION_NOT_FOUND' });
@@ -1387,6 +1456,9 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         if (tx.qrCode) {
           const qrRec = qrApprovals.get(tx.qrCode);
           if (qrRec) qrRec.used = true;
+          if (durability) {
+            void durability.markQrUsed(tx.qrCode).catch(() => {});
+          }
         }
 
         let paypalOrderId = `PP-SBX-${settlementResult.settlement.settlementId.slice(0, 8).toUpperCase()}`;
@@ -1434,7 +1506,48 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       if (txRejectRoleBlocked) {
         return txRejectRoleBlocked;
       }
-      const txId = txRejectMatch[1];
+      const txId = decodeURIComponent(txRejectMatch[1] ?? '');
+      if (txId.startsWith('qr:')) {
+        const qrCode = txId.slice(3);
+        const approvalRecord = qrApprovals.get(qrCode);
+        if (!approvalRecord || (authedOwnerId !== null && approvalRecord.ownerId !== authedOwnerId)) {
+          return reply(404, { success: false, error: 'TRANSACTION_NOT_FOUND' });
+        }
+        if (approvalRecord.used || inFlightQrCodes.has(qrCode)) {
+          return reply(409, { success: false, error: 'TRANSACTION_ALREADY_FINALIZED' });
+        }
+        approvalRecord.used = true;
+        if (durability) {
+          void durability.markQrUsed(qrCode).catch(() => {});
+        }
+        pushAudit({
+          id: `evt-${randomUUID().slice(0, 8)}`,
+          timestamp: new Date().toISOString(),
+          action: 'TX_REJECT',
+          actor: authedOwnerId !== null ? `key:${authedOwnerId}` : 'Jordan Diaz (Finance Admin)',
+          invoiceId: approvalRecord.proposal.invoiceId,
+          vendor: approvalRecord.proposal.vendorName,
+          amountMinor: Number(approvalRecord.proposal.grandTotalMinor),
+          decisionState: 'REJECTED',
+          reasonCode: approvalRecord.initialReasonCode,
+          detail: `Rejected ${approvalRecord.proposal.invoiceId} (${approvalRecord.proposal.vendorName}).`,
+        });
+        return reply(200, {
+          success: true,
+          transaction: {
+            id: txId,
+            vendor: approvalRecord.proposal.vendorName,
+            invoiceNumber: approvalRecord.proposal.invoiceId,
+            amountFormatted: `$${(Number(approvalRecord.proposal.grandTotalMinor) / 100).toFixed(2)}`,
+            amountMinor: Number(approvalRecord.proposal.grandTotalMinor),
+            status: 'Blocked',
+            policyCode: approvalRecord.initialReasonCode,
+            dateFormatted: 'Rejected',
+            canApproveReject: false,
+            proposal: null,
+          },
+        });
+      }
       const tx = transactions.find((t) => t.id === txId);
       if (!tx) {
         return reply(404, { success: false, error: 'TRANSACTION_NOT_FOUND' });
@@ -1448,6 +1561,9 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       if (tx.qrCode) {
         const qrRec = qrApprovals.get(tx.qrCode);
         if (qrRec) qrRec.used = true;
+        if (durability) {
+          void durability.markQrUsed(tx.qrCode).catch(() => {});
+        }
       }
 
       pushAudit({
@@ -1486,6 +1602,22 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
     }
 
     if (options.method === 'GET' && options.url === '/v1/vendors') {
+      if (ledger instanceof PostgresLedger) {
+        const entries = await ledger.listEntries(authedOwnerId, 1000);
+        const vendors = defaultTrustedVendors.map((name) => {
+          const vendorEntries = entries.filter((entry) => entry.vendorName === name);
+          const settledMinor = vendorEntries
+            .filter((entry) => entry.status === 'SETTLED')
+            .reduce((sum, entry) => sum + entry.amountMinor, 0);
+          return {
+            name,
+            trusted: true,
+            transactionCount: vendorEntries.length,
+            settledMinor,
+          };
+        });
+        return reply(200, { vendors, source: 'postgres' });
+      }
       const vendors = defaultTrustedVendors.map((name) => {
         const vendorTxs = transactions.filter((t) => t.vendor === name);
         const totalMinor = vendorTxs.reduce((sum, t) => sum + (t.status === 'Paid' ? t.amountMinor : 0), 0);
@@ -1496,7 +1628,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
           settledMinor: totalMinor,
         };
       });
-      return reply(200, { vendors });
+      return reply(200, { vendors, source: 'in_memory_demo' });
     }
 
     if (options.method === 'GET' && options.url === '/v1/audit') {
@@ -1591,19 +1723,37 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
     inject: <T = unknown>(options: InjectOptions) =>
       handleRequest(options) as Promise<InjectResponse<T>>,
     hydrate: async () => {
-      if (!durability) {
-        return;
-      }
-      try {
-        const pending = await durability.loadPendingQrApprovals();
-        for (const record of pending) {
-          if (!qrApprovals.has(record.code)) {
-            qrApprovals.set(record.code, record);
+      if (durability) {
+        try {
+          const pending = await durability.loadPendingQrApprovals();
+          for (const record of pending) {
+            if (!qrApprovals.has(record.code)) {
+              qrApprovals.set(record.code, record);
+            }
           }
+        } catch {
+          // Fail visible at boot via log below; the server still starts.
+          console.error('QR approval hydration from durable store failed; starting with empty approvals.');
         }
-      } catch {
-        // Fail visible at boot via log below; the server still starts.
-        console.error('QR approval hydration from durable store failed; starting with empty approvals.');
+        try {
+          const persisted = await durability.loadAuditEvents(200);
+          for (const event of persisted) {
+            if (!auditEvents.some((existing) => existing.id === event.id)) {
+              auditEvents.push(event);
+            }
+          }
+        } catch {
+          console.error('Audit history hydration from durable store failed; starting with empty audit history.');
+        }
+      }
+      if (ledger instanceof PostgresLedger) {
+        try {
+          for (const invoiceId of await ledger.listSettledInvoiceIds()) {
+            settledInvoices.add(invoiceId);
+          }
+        } catch {
+          console.error('Settled-invoice hydration failed; PostgreSQL uniqueness still guards execution.');
+        }
       }
     },
     listen: (port = 4000) =>

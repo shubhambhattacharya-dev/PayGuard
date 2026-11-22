@@ -1,13 +1,22 @@
 export type TransactionStatus = 'Review required' | 'Paid' | 'On hold' | 'Blocked';
 
 export type PolicyReasonCode =
-  | 'HOLD_OVER_CAP'
   | 'AUTO_EXECUTED'
+  | 'OK_AUTO'
+  | 'HOLD_OVER_CAP'
+  | 'HOLD_VELOCITY_LIMIT'
+  | 'HOLD_DAILY_CAP_EXCEEDED'
   | 'HOLD_VENDOR_DESTINATION'
   | 'HOLD_VENDOR_UNTRUSTED'
+  | 'HOLD_MANUAL_REVIEW'
   | 'REJECT_PROMPT_INJECTION'
   | 'REJECT_UNCATALOGUED_SKU'
-  | 'REJECT_MATH_MISMATCH';
+  | 'REJECT_PRICE_MISMATCH'
+  | 'REJECT_MATH_MISMATCH'
+  | 'REJECT_DUPLICATE_INVOICE'
+  | 'REJECT_SCHEMA_INVALID'
+  | 'REJECT_TENANT_MISMATCH'
+  | 'DEPENDENCY_UNAVAILABLE';
 
 export interface ReasoningStep {
   round: number; // 1, 2, 3, 4

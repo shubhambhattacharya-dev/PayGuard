@@ -10,22 +10,10 @@ import { PolicyInspector } from '../../components/PolicyInspector';
 import { QrApprovalModal } from '../../components/QrApprovalModal';
 import { KeyboardShortcutsBar } from '../../components/KeyboardShortcutsBar';
 import { LedgerWorkspaceSkeleton } from '../../components/Skeleton';
-import { PolicyReasonCode, Transaction, TransactionStatus } from '../../lib/types';
+import { mapApiTransactions } from '../../lib/apiTransactions';
+import { Transaction } from '../../lib/types';
 
 const API_URL = '/api/payguard';
-
-interface ApiTransactionRow {
-  id: string;
-  vendor?: string;
-  invoiceNumber?: string;
-  amountFormatted?: string;
-  amountMinor?: number;
-  status: TransactionStatus;
-  policyCode: PolicyReasonCode;
-  dateFormatted?: string;
-  canApproveReject: boolean;
-  qrCode?: string;
-}
 
 export default function PaymentsPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -35,6 +23,8 @@ export default function PaymentsPage() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [ledgerSource, setLedgerSource] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
   const [inspectorOpen, setInspectorOpen] = useState<boolean>(true);
 
@@ -46,42 +36,19 @@ export default function PaymentsPage() {
         signal: AbortSignal.timeout(2500),
       });
       if (!res.ok) throw new Error(`Transactions request failed (${res.status})`);
-      const data = (await res.json()) as { transactions?: ApiTransactionRow[] } | null;
-      if (!Array.isArray(data?.transactions)) throw new Error('Invalid transactions response');
-      const apiTransactions = data.transactions;
-      const validStatuses = new Set<TransactionStatus>(['Review required', 'Paid', 'On hold', 'Blocked']);
-      const validPolicies = new Set<PolicyReasonCode>(['HOLD_OVER_CAP', 'AUTO_EXECUTED', 'HOLD_VENDOR_DESTINATION', 'HOLD_VENDOR_UNTRUSTED', 'REJECT_PROMPT_INJECTION', 'REJECT_UNCATALOGUED_SKU', 'REJECT_MATH_MISMATCH']);
-      const rows: Transaction[] = apiTransactions.filter((live) =>
-        typeof live.id === 'string' && live.id.length > 0 && typeof live.vendor === 'string' && live.vendor.trim().length > 0 && typeof live.invoiceNumber === 'string' && live.invoiceNumber.trim().length > 0 && Number.isSafeInteger(live.amountMinor) && (live.amountMinor ?? -1) >= 0 && validStatuses.has(live.status) && validPolicies.has(live.policyCode) && typeof live.canApproveReject === 'boolean'
-      ).map((live) => ({
-            id: live.id,
-            vendor: live.vendor ?? 'Unknown Vendor',
-            invoiceNumber: live.invoiceNumber ?? live.id,
-            amountFormatted: live.amountFormatted ?? '$0.00',
-            amountMinor: live.amountMinor ?? 0,
-            status: live.status,
-            policyCode: live.policyCode,
-            dateFormatted: live.dateFormatted ?? 'Today',
-            canApproveReject: live.canApproveReject,
-            reasoningSteps: [],
-            policyChecks: [],
-            policyLimits: {
-              autoExecuteCap: '$100.00',
-              vendorVelocitySpent: '$0.00',
-              vendorVelocityLimit: '$1,000.00',
-              velocityWindow: '60m',
-            },
-            ...(live.qrCode
-              ? { qrCode: { singleUseCode: live.qrCode, expiresInSeconds: 600 } }
-              : {}),
-          }));
+      const data = (await res.json()) as { transactions?: unknown; source?: unknown } | null;
+      const rows = mapApiTransactions(data?.transactions);
       setTransactions(rows);
+      setLedgerSource(typeof data?.source === 'string' ? data.source : null);
       setSelectedTxId((current) => rows.some((row) => row.id === current) ? current : rows[0]?.id ?? '');
       setExpandedTxIds((current) => new Set([...current].filter((id) => rows.some((row) => row.id === id))));
+      setLoadError(null);
     } catch {
       setTransactions([]);
       setSelectedTxId('');
       setExpandedTxIds(new Set());
+      setLedgerSource(null);
+      setLoadError('Live API unavailable — no ledger data is shown. Demo transactions are disabled in the workspace.');
     } finally {
       setIsLoading(false);
     }
@@ -138,7 +105,7 @@ export default function PaymentsPage() {
         }
         markPaidLocally(tx.id, data.toastMessage ?? 'Gate re-ran, decision stood');
       } catch {
-        setActionError('API unreachable — start @payguard/api on port 4000 to settle approvals.');
+        setActionError('Live API unreachable — approval is unavailable right now.');
       }
     },
     [markPaidLocally],
@@ -172,7 +139,7 @@ export default function PaymentsPage() {
       );
       setToastMessage(`Blocked ${tx.invoiceNumber} (${tx.vendor})`);
     } catch {
-      setActionError('API unreachable — start @payguard/api on port 4000 to reject transactions.');
+      setActionError('Live API unreachable — rejection is unavailable right now.');
     }
   }, []);
 
@@ -188,7 +155,11 @@ export default function PaymentsPage() {
       } else if (e.key === 'r' || e.key === 'R') {
         void handleReject(selectedTx);
       } else if (e.key === 'q' || e.key === 'Q') {
-        setQrModalTx(selectedTx);
+        if (selectedTx.qrCode?.singleUseCode) {
+          setQrModalTx(selectedTx);
+        } else {
+          setActionError('This ledger row has no live QR approval code.');
+        }
       }
     };
 
@@ -247,6 +218,26 @@ export default function PaymentsPage() {
               </div>
             )}
 
+            {loadError && !isLoading && (
+              <div
+                role="alert"
+                className="mb-4 px-4 py-2.5 rounded-xl bg-[rgba(255,184,107,0.12)] border border-[rgba(255,184,107,0.3)] text-xs text-[#ffc477]"
+              >
+                {loadError}
+              </div>
+            )}
+
+            {ledgerSource === 'in_memory_demo' && !isLoading && (
+              <div
+                role="status"
+                className="mb-4 px-4 py-2.5 rounded-xl bg-[#15211b] border border-[rgba(255,184,107,0.35)] text-xs text-[#ffc477]"
+              >
+                This API is serving an in-memory demo ledger — these rows are seeded and reset on
+                restart. Set <span className="font-mono">DATABASE_URL</span> on the API service for
+                durable real settlement data.
+              </div>
+            )}
+
             {isLoading ? (
               <LedgerWorkspaceSkeleton />
             ) : (
@@ -269,9 +260,19 @@ export default function PaymentsPage() {
                   onToggleExpand={handleToggleExpand}
                   onApprove={(tx) => void handleApprove(tx)}
                   onReject={(tx) => void handleReject(tx)}
-                  onOpenQr={(tx) => setQrModalTx(tx)}
+                  onOpenQr={(tx) => {
+                    if (tx.qrCode?.singleUseCode) {
+                      setQrModalTx(tx);
+                    } else {
+                      setActionError('This ledger row has no live QR approval code.');
+                    }
+                  }}
                 />
-                {transactions.length === 0 && <p className="mt-4 text-center text-xs text-[#9aa9a0]">No valid transactions returned by the API.</p>}
+                {transactions.length === 0 && !loadError && (
+                  <p className="mt-4 text-center text-xs text-[#9aa9a0]">
+                    No live transactions yet — run the agent or settle an invoice to populate the ledger.
+                  </p>
+                )}
               </>
             )}
           </main>
@@ -281,7 +282,13 @@ export default function PaymentsPage() {
             <PolicyInspector
               className="xl:w-96 shrink-0 transition-all duration-300 ease-in-out"
               transaction={selectedTx}
-              onOpenQr={(tx) => setQrModalTx(tx)}
+              onOpenQr={(tx) => {
+                if (tx.qrCode?.singleUseCode) {
+                  setQrModalTx(tx);
+                } else {
+                  setActionError('This ledger row has no live QR approval code.');
+                }
+              }}
               onApprove={(tx) => void handleApprove(tx)}
             />
           )}
@@ -292,11 +299,11 @@ export default function PaymentsPage() {
       </div>
 
       {/* Single-Use QR Mobile Approval Modal */}
-      {qrModalTx && (
+      {qrModalTx?.qrCode && (
         <QrApprovalModal
           isOpen={true}
           onClose={() => setQrModalTx(null)}
-          singleUseCode={qrModalTx.qrCode?.singleUseCode || 'PG-7F3K-9D2L'}
+          singleUseCode={qrModalTx.qrCode.singleUseCode}
           vendorName={qrModalTx.vendor}
           amountFormatted={qrModalTx.amountFormatted}
           onApproveSuccess={(msg) => markPaidLocally(qrModalTx.id, msg ?? 'Gate re-ran, decision stood')}

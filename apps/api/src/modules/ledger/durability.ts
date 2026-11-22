@@ -36,6 +36,8 @@ export interface RailStateReport {
 
 export interface DurableStore {
   saveAuditEvent(event: AuditEvent): Promise<void>;
+  /** Newest-first audit history, used to rehydrate the read path at boot. */
+  loadAuditEvents(limit?: number): Promise<AuditEvent[]>;
   saveQrApproval(record: QrApprovalRecord): Promise<void>;
   markQrUsed(code: string): Promise<void>;
   loadPendingQrApprovals(): Promise<QrApprovalRecord[]>;
@@ -94,6 +96,14 @@ export class PostgresDurabilityStore implements DurableStore {
         event.timestamp,
       ],
     );
+  }
+
+  public async loadAuditEvents(limit = 200): Promise<AuditEvent[]> {
+    const res = await this.pool.query<{ payload: AuditEvent }>(
+      `SELECT payload FROM audit_events ORDER BY created_at DESC LIMIT $1`,
+      [limit],
+    );
+    return res.rows.map((row) => row.payload);
   }
 
   public async saveQrApproval(record: QrApprovalRecord): Promise<void> {

@@ -1,3 +1,5 @@
+> **STATUS (2026-11-22): HISTORICAL — SUPERSEDED.** This audit was written on 2026-11-10, before the production-hardening work. Most gaps listed below are now implemented; see README §5b and `docs/OPERATIONS.md` for the current posture. Do not treat this file as a live status report.
+
 # PayGuard Persistent Memory: Unmet Hackathon Rules & UI-to-Backend Feature Gaps
 
 **Saved At**: 2026-11-10T00:09:30+05:30  

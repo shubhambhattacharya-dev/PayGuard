@@ -1,6 +1,3 @@
-import { existsSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   type ApprovedForExecution,
@@ -12,16 +9,24 @@ import type { Pool } from 'pg';
 import { createPgPool, runMigrations } from '../../db/pool.js';
 import { PostgresLedger } from './postgres-ledger.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const rootEnvPath = path.resolve(__dirname, '../../../../../.env');
-if (!process.env.DATABASE_URL && existsSync(rootEnvPath) && typeof process.loadEnvFile === 'function') {
-  process.loadEnvFile(rootEnvPath);
-}
-
+// IMPORTANT: never load the repository `.env` here. These specs TRUNCATE
+// ledger tables, so pointing them at a developer's real DATABASE_URL would
+// destroy production/demo data. Only an explicit TEST_DATABASE_URL (preferred)
+// or a LOCAL/CI PostgreSQL instance is allowed.
 const DATABASE_URL =
-  process.env.DATABASE_URL ?? 'postgresql://payguard:payguard@127.0.0.1:5432/payguard';
+  process.env.TEST_DATABASE_URL ??
+  process.env.DATABASE_URL ??
+  'postgresql://payguard:payguard@127.0.0.1:5432/payguard';
 
 const isCi = process.env.CI === 'true' || process.env.CI === '1';
+const isLocalHost = (() => {
+  try {
+    const host = new URL(DATABASE_URL).hostname;
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]';
+  } catch {
+    return false;
+  }
+})();
 
 async function canReachPostgres(connectionString: string): Promise<boolean> {
   const probePool = createPgPool(connectionString);
@@ -35,7 +40,10 @@ async function canReachPostgres(connectionString: string): Promise<boolean> {
   }
 }
 
-const pgReachable = isCi ? true : await canReachPostgres(DATABASE_URL);
+// A remote database is never a valid target for a destructive test suite,
+// even in CI. Local Docker/CI service hosts are always numeric hostnames.
+const isSafeDestructiveTarget = isCi || isLocalHost;
+const pgReachable = isSafeDestructiveTarget && (await canReachPostgres(DATABASE_URL));
 
 describe.skipIf(!pgReachable)('PostgresLedger (Ticket 1 Red-First TDD: SELECT FOR UPDATE & Idempotency)', () => {
   let pool: Pool;

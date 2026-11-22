@@ -5,45 +5,56 @@ import Link from 'next/link';
 import { ShieldCheck, ArrowRight, Server, Lock } from 'lucide-react';
 import { AppShell } from '../../components/AppShell';
 import { KpiStrip } from '../../components/KpiStrip';
-import { INITIAL_TRANSACTIONS } from '../../lib/mockData';
-import { PolicyReasonCode, Transaction, TransactionStatus } from '../../lib/types';
+import { mapApiTransactions } from '../../lib/apiTransactions';
+import { Transaction } from '../../lib/types';
 
 const API_URL = '/api/payguard';
 
+type LiveState = 'loading' | 'live' | 'offline';
+
 export default function OverviewPage() {
-  const [transactions, setTransactions] = useState<Transaction[]>(INITIAL_TRANSACTIONS);
+  // Never seed the workspace with demo transactions: when the API is down we
+  // show an honest empty state instead of invented money data.
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [liveState, setLiveState] = useState<LiveState>('loading');
   const [health, setHealth] = useState<{
     status?: string;
     paypalSandboxReady?: boolean;
     executionMode?: string;
     fiduciaryLaw?: string;
+    ledgerStore?: 'postgres' | 'in_memory';
+    demoLedger?: boolean;
   } | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+
     fetch(`${API_URL}/healthz`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((d) => setHealth(d))
-      .catch(() => setHealth(null));
+      .then((d) => {
+        if (!cancelled) setHealth(d);
+      })
+      .catch(() => {
+        if (!cancelled) setHealth(null);
+      });
 
     fetch(`${API_URL}/v1/transactions`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then(
-        (
-          d: {
-            transactions?: { id: string; status: TransactionStatus; policyCode: PolicyReasonCode; canApproveReject: boolean }[];
-          } | null,
-        ) => {
-          if (!d?.transactions) return;
-          const byId = new Map(d.transactions.map((t) => [t.id, t]));
-          setTransactions((prev) =>
-            prev.map((item) => {
-              const live = byId.get(item.id);
-              return live ? { ...item, ...live } : item;
-            }),
-          );
-        },
-      )
-      .catch(() => {});
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((d: { transactions?: unknown } | null) => {
+        if (cancelled) return;
+        // API rows are the only source of truth — no local merge, no mock seed.
+        setTransactions(mapApiTransactions(d?.transactions));
+        setLiveState('live');
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setTransactions([]);
+        setLiveState('offline');
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   return (
@@ -51,6 +62,35 @@ export default function OverviewPage() {
       title="Overview"
       subtitle="Fiduciary gateway health, active policy caps, and live ledger posture."
     >
+      {liveState === 'offline' && (
+        <div
+          role="alert"
+          className="mb-4 px-4 py-3 rounded-xl bg-[rgba(255,184,107,0.12)] border border-[rgba(255,184,107,0.3)] text-xs text-[#ffc477]"
+        >
+          Live API is unavailable, so no ledger data is shown. Demo transactions are disabled in the
+          workspace — start the API or check <span className="font-mono">PAYGUARD_API_URL</span> and{' '}
+          <span className="font-mono">PAYGUARD_API_KEY</span> on the dashboard deployment.
+        </div>
+      )}
+
+      {health?.demoLedger && (
+        <div
+          role="status"
+          className="mb-4 px-4 py-3 rounded-xl bg-[#15211b] border border-[rgba(255,184,107,0.35)] text-xs text-[#ffc477]"
+        >
+          This API is running in in-memory demo mode — rows below are seeded and reset whenever the
+          API restarts. Set <span className="font-mono">DATABASE_URL</span> on the API service (Render)
+          to persist and serve real ledger data.
+        </div>
+      )}
+
+      {liveState === 'live' && transactions.length === 0 && (
+        <div className="mb-4 px-4 py-3 rounded-xl bg-[#15211b] border border-[rgba(222,242,227,0.12)] text-xs text-[#9aa9a0]">
+          API connected. No transactions have been recorded yet — run the agent or settle an invoice
+          to populate the live ledger.
+        </div>
+      )}
+
       <KpiStrip transactions={transactions} />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
@@ -62,7 +102,9 @@ export default function OverviewPage() {
           <dl className="space-y-2 text-xs">
             <div className="flex justify-between">
               <dt className="text-[#9aa9a0]">Gateway status</dt>
-              <dd className="font-mono font-medium text-[#eaf0eb]">{health ? 'ONLINE (200 OK)' : 'OFFLINE'}</dd>
+              <dd className="font-mono font-medium text-[#eaf0eb]">
+                {health ? 'ONLINE (200 OK)' : liveState === 'loading' ? 'CHECKING' : 'OFFLINE'}
+              </dd>
             </div>
             <div className="flex justify-between">
               <dt className="text-[#9aa9a0]">PayPal Sandbox executor</dt>
@@ -72,7 +114,21 @@ export default function OverviewPage() {
             </div>
             <div className="flex justify-between">
               <dt className="text-[#9aa9a0]">Execution mode</dt>
-              <dd className="font-mono font-medium text-[#eaf0eb]">{health?.executionMode ?? 'offline_demo'}</dd>
+              <dd className="font-mono font-medium text-[#eaf0eb]">
+                {health?.executionMode ?? (liveState === 'loading' ? 'checking' : 'unavailable')}
+              </dd>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-[#9aa9a0]">Ledger store</dt>
+              <dd className="font-mono font-medium text-[#eaf0eb]">
+                {health?.ledgerStore === 'postgres'
+                  ? 'POSTGRESQL (DURABLE)'
+                  : health?.ledgerStore === 'in_memory'
+                    ? 'IN-MEMORY DEMO'
+                    : liveState === 'loading'
+                      ? 'CHECKING'
+                      : 'UNAVAILABLE'}
+              </dd>
             </div>
           </dl>
         </div>
@@ -120,4 +176,3 @@ export default function OverviewPage() {
     </AppShell>
   );
 }
-

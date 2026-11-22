@@ -29,7 +29,7 @@ export default function AuditPage() {
     fetch(`${API_URL}/v1/audit`)
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
       .then((data: { events?: AuditEventRow[] }) => setEvents(data.events ?? []))
-      .catch(() => setError('API unreachable — start @payguard/api on port 4000 to view the live audit trail.'))
+      .catch(() => setError('Live API unreachable — the audit trail could not be loaded.'))
       .finally(() => setLoading(false));
   }, []);
 
