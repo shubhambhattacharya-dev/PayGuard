@@ -16,6 +16,7 @@ export interface ApiTransactionRow {
   dateFormatted?: unknown;
   canApproveReject?: unknown;
   qrCode?: unknown;
+  qrExpiresAtMs?: unknown;
 }
 
 const VALID_STATUSES: ReadonlySet<TransactionStatus> = new Set<TransactionStatus>([
@@ -111,7 +112,18 @@ export function mapApiTransactionRow(row: ApiTransactionRow): Transaction | null
     policyChecks: [],
     policyLimits: { ...KNOWN_POLICY_LIMITS },
     ...(isNonEmptyString(row.qrCode)
-      ? { qrCode: { singleUseCode: row.qrCode, expiresInSeconds: 600 } }
+      ? {
+          qrCode: {
+            singleUseCode: row.qrCode,
+            expiresInSeconds:
+              typeof row.qrExpiresAtMs === 'number' && Number.isFinite(row.qrExpiresAtMs)
+                ? Math.max(0, Math.floor((row.qrExpiresAtMs - Date.now()) / 1000))
+                : 600,
+            ...(typeof row.qrExpiresAtMs === 'number' && Number.isFinite(row.qrExpiresAtMs)
+              ? { expiresAtMs: row.qrExpiresAtMs }
+              : {}),
+          },
+        }
       : {}),
   };
 }

@@ -64,15 +64,16 @@ export function LiveGatePanel({ onAfterRun }: LiveGatePanelProps = {}) {
     setResult(null);
     setQrResult(null);
     try {
+      const invoiceId = `INV-${Date.now().toString().slice(-4)}`;
       const res = await fetch(`${API_URL}/v1/agent/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ownerId: 'owner_northstar',
           model,
-          goal: 'Pay the Cedar Supply invoice INV-3155',
+          goal: `Pay the Cedar Supply invoice ${invoiceId}`,
           invoiceText:
-            'Vendor: Cedar Supply | Invoice INV-3155 | Office Paper Reams x4 @ $16.00 | Total $64.00',
+            `Vendor: Cedar Supply | Invoice ${invoiceId} | Office Paper Reams x4 @ $16.00 | Total $64.00`,
           idempotencyKey: `ui-${Date.now()}`,
         }),
       });

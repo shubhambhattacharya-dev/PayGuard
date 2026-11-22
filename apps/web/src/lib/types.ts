@@ -69,5 +69,6 @@ export interface Transaction {
   qrCode?: {
     singleUseCode: string;
     expiresInSeconds: number;
+    expiresAtMs?: number;
   };
 }

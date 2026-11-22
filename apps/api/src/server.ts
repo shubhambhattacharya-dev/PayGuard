@@ -90,11 +90,13 @@ export interface QrApprovalRecord {
   readonly expiresAtMs: number;
   readonly invoiceText?: string;
   used: boolean;
+  outcome?: 'APPROVED' | 'REJECTED';
 }
 
 export interface AuditEvent {
   readonly id: string;
   readonly timestamp: string;
+  readonly ownerId?: string;
   readonly action: 'EVALUATE' | 'AGENT_RUN' | 'HITL_APPROVE' | 'TX_APPROVE' | 'TX_REJECT' | 'EXECUTE';
   readonly actor: string;
   readonly invoiceId: string;
@@ -272,7 +274,8 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       if (oldestKey) settledExecutionEnvelopes.delete(oldestKey);
     }
   };
-  const settledInvoices = new Set<string>(isDurableLedger ? [] : ['INV-3150']);
+  const settledKey = (owner: string, invoiceId: string): string => `${owner}:${invoiceId}`;
+  const settledInvoices = new Set<string>(isDurableLedger ? [] : [settledKey('owner_northstar', 'INV-3150')]);
   const auditEvents: AuditEvent[] = isDurableLedger
     ? []
     : [
@@ -592,6 +595,19 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       if (typeof body.invoiceText === 'string' && body.invoiceText.trim().length > 0) {
         const injectionMatch = detectPromptInjection(body.invoiceText);
         if (injectionMatch) {
+          pushAudit({
+            id: `evt-${randomUUID().slice(0, 8)}`,
+            timestamp: new Date().toISOString(),
+            ownerId,
+            action: 'EVALUATE',
+            actor: ownerId,
+            invoiceId: proposal.invoiceId,
+            vendor: proposal.vendorName,
+            amountMinor: Number(proposal.grandTotalMinor),
+            decisionState: 'REJECTED',
+            reasonCode: ReasonCode.REJECT_PROMPT_INJECTION,
+            detail: `Blocked prompt injection ("${injectionMatch}") on ${proposal.invoiceId} (${proposal.vendorName}).`,
+          });
           return reply(200, {
             decision: {
               state: 'REJECTED',
@@ -662,7 +678,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
 
       // Server-authoritative policy inputs (never trust client-supplied overrides).
       const trustedVendors = defaultTrustedVendors;
-      const isDuplicateInvoice = settledInvoices.has(proposal.invoiceId);
+      const isDuplicateInvoice = settledInvoices.has(settledKey(ownerId, proposal.invoiceId));
       const hourlySpentMinor = await getHourlySpentMinor(ownerId);
 
       // 2d. Deterministic Policy Gate (Ticket #1 Kernel)
@@ -774,7 +790,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
           ownerId: execOwnerId,
           proposal: parsedProposal.data,
           trustedVendors: defaultTrustedVendors,
-          isDuplicateInvoice: settledInvoices.has(parsedProposal.data.invoiceId),
+          isDuplicateInvoice: settledInvoices.has(settledKey(execOwnerId, parsedProposal.data.invoiceId)),
           hourlySpentMinor: await getHourlySpentMinor(execOwnerId),
           policyVersion: 'v2026.11',
           idempotencyKey: execIdempotencyKey,
@@ -818,10 +834,11 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         return reply(200, { ...cachedEnvelope, replayed: true });
       }
 
-      settledInvoices.add(parsedProposal.data.invoiceId);
+      settledInvoices.add(settledKey(execOwnerId, parsedProposal.data.invoiceId));
       pushAudit({
         id: `evt-${randomUUID().slice(0, 8)}`,
         timestamp: new Date().toISOString(),
+        ownerId: execOwnerId,
         action: 'EXECUTE',
         actor: execOwnerId,
         invoiceId: parsedProposal.data.invoiceId,
@@ -885,7 +902,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         ownerId: record.ownerId,
         proposal: record.proposal,
         trustedVendors: record.trustedVendors,
-        isDuplicateInvoice: settledInvoices.has(record.proposal.invoiceId),
+        isDuplicateInvoice: settledInvoices.has(settledKey(record.ownerId, record.proposal.invoiceId)),
         hourlySpentMinor: Math.max(record.hourlySpentMinor, await getHourlySpentMinor(record.ownerId)),
         policyVersion: record.policyVersion,
         idempotencyKey: record.idempotencyKey,
@@ -959,7 +976,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         return reply(422, settlementResult);
       }
 
-      settledInvoices.add(record.proposal.invoiceId);
+      settledInvoices.add(settledKey(record.ownerId, record.proposal.invoiceId));
 
       let paypalOrderId = `PP-SBX-${settlementResult.settlement.settlementId.slice(0, 8).toUpperCase()}`;
       let paypalPayload: Record<string, unknown> | undefined;
@@ -1047,6 +1064,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         const result = await settleApprovedQrRecord(approvalRecord);
         if (result.statusCode === 200) {
           approvalRecord.used = true;
+          approvalRecord.outcome = 'APPROVED';
           if (durability) {
             void durability.markQrUsed(body.singleUseCode).catch(() => {});
           }
@@ -1102,6 +1120,19 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       // 6a. Untrusted prompt-injection scan FIRST - injected text (invoice or goal) never reaches policy.
       const injectionMatch = detectPromptInjection(invoiceText) ?? detectPromptInjection(goal);
       if (injectionMatch) {
+        pushAudit({
+          id: `evt-${randomUUID().slice(0, 8)}`,
+          timestamp: new Date().toISOString(),
+          ownerId,
+          action: 'AGENT_RUN',
+          actor: ownerId,
+          invoiceId: 'UNTRUSTED-INPUT',
+          vendor: 'Unknown vendor',
+          amountMinor: 0,
+          decisionState: 'REJECTED',
+          reasonCode: ReasonCode.REJECT_PROMPT_INJECTION,
+          detail: `Blocked prompt injection ("${injectionMatch}") before agent execution.`,
+        });
         return reply(200, {
           decision: {
             state: 'REJECTED',
@@ -1188,7 +1219,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         ownerId,
         proposal: run.proposal,
         trustedVendors: defaultTrustedVendors,
-        isDuplicateInvoice: settledInvoices.has(run.proposal.invoiceId),
+        isDuplicateInvoice: settledInvoices.has(settledKey(ownerId, run.proposal.invoiceId)),
         hourlySpentMinor: await getHourlySpentMinor(ownerId),
         policyVersion,
         idempotencyKey,
@@ -1223,6 +1254,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
           hourlySpentMinor: await getHourlySpentMinor(ownerId),
           initialReasonCode: decision.reasonCode,
           expiresAtMs: Date.now() + 10 * 60_000,
+          invoiceText,
           used: false,
         };
         qrApprovals.set(qrCode, qrRecord);
@@ -1265,7 +1297,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         return reply(422, { decision: toPublicPolicyDecision(decision), thoughts, proposal: run.proposal, settlement });
       }
 
-      settledInvoices.add(run.proposal.invoiceId);
+      settledInvoices.add(settledKey(ownerId, run.proposal.invoiceId));
 
       let paypalOrderId = `PP-SBX-${settlement.settlement.settlementId.slice(0, 8).toUpperCase()}`;
       let paypalPayload: Record<string, unknown> | null = null;
@@ -1330,6 +1362,8 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
             policyCode: r.initialReasonCode,
             dateFormatted: 'Pending',
             canApproveReject: true,
+            qrCode: r.code,
+            qrExpiresAtMs: r.expiresAtMs,
             proposal: null,
           }));
         const settledRows = entries.map((entry) => ({
@@ -1383,6 +1417,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
           const result = await settleApprovedQrRecord(approvalRecord);
           if (result.statusCode === 200) {
             approvalRecord.used = true;
+            approvalRecord.outcome = 'APPROVED';
             if (durability) {
               void durability.markQrUsed(qrCode).catch(() => {});
             }
@@ -1413,7 +1448,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
           ownerId: txOwnerId,
           proposal: tx.proposal,
           trustedVendors: defaultTrustedVendors,
-          isDuplicateInvoice: settledInvoices.has(tx.proposal.invoiceId),
+          isDuplicateInvoice: settledInvoices.has(settledKey(txOwnerId, tx.proposal.invoiceId)),
           hourlySpentMinor: await getHourlySpentMinor(txOwnerId),
           policyVersion: 'v2026.11',
           idempotencyKey: `idem_tx_${tx.id}`,
@@ -1452,10 +1487,13 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         }
 
         settled = true;
-        settledInvoices.add(tx.proposal.invoiceId);
+        settledInvoices.add(settledKey(txOwnerId, tx.proposal.invoiceId));
         if (tx.qrCode) {
           const qrRec = qrApprovals.get(tx.qrCode);
-          if (qrRec) qrRec.used = true;
+          if (qrRec) {
+            qrRec.used = true;
+            qrRec.outcome = 'APPROVED';
+          }
           if (durability) {
             void durability.markQrUsed(tx.qrCode).catch(() => {});
           }
@@ -1517,6 +1555,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
           return reply(409, { success: false, error: 'TRANSACTION_ALREADY_FINALIZED' });
         }
         approvalRecord.used = true;
+        approvalRecord.outcome = 'REJECTED';
         if (durability) {
           void durability.markQrUsed(qrCode).catch(() => {});
         }
@@ -1560,7 +1599,10 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       tx.canApproveReject = false;
       if (tx.qrCode) {
         const qrRec = qrApprovals.get(tx.qrCode);
-        if (qrRec) qrRec.used = true;
+        if (qrRec) {
+          qrRec.used = true;
+          qrRec.outcome = 'REJECTED';
+        }
         if (durability) {
           void durability.markQrUsed(tx.qrCode).catch(() => {});
         }
@@ -1587,7 +1629,21 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
 
     // 8. Approvals, Vendors, Audit Trail Routes
     if (options.method === 'GET' && options.url === '/v1/approvals') {
-      const approvals = Array.from(qrApprovals.values()).map((r) => ({
+      const resolveOutcome = (r: QrApprovalRecord): 'APPROVED' | 'REJECTED' | null => {
+        if (r.outcome) return r.outcome;
+        if (!r.used) return null;
+        const match = auditEvents.find(
+          (e) =>
+            e.invoiceId === r.proposal.invoiceId &&
+            (e.action === 'TX_REJECT' || e.action === 'HITL_APPROVE' || e.action === 'TX_APPROVE'),
+        );
+        if (match?.action === 'TX_REJECT') return 'REJECTED';
+        if (match?.action === 'HITL_APPROVE' || match?.action === 'TX_APPROVE') return 'APPROVED';
+        return null;
+      };
+      const approvals = Array.from(qrApprovals.values())
+        .filter((r) => authedOwnerId === null || r.ownerId === authedOwnerId)
+        .map((r) => ({
         code: r.code,
         ownerId: r.ownerId,
         invoiceId: r.proposal.invoiceId,
@@ -1595,6 +1651,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         amountMinor: Number(r.proposal.grandTotalMinor),
         reasonCode: r.initialReasonCode,
         used: r.used,
+        outcome: resolveOutcome(r),
         expired: Date.now() >= r.expiresAtMs,
         expiresAt: new Date(r.expiresAtMs).toISOString(),
       }));
@@ -1602,28 +1659,40 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
     }
 
     if (options.method === 'GET' && options.url === '/v1/vendors') {
+      const trustedSet = new Set(defaultTrustedVendors);
       if (ledger instanceof PostgresLedger) {
         const entries = await ledger.listEntries(authedOwnerId, 1000);
-        const vendors = defaultTrustedVendors.map((name) => {
+        const nowMs = Date.now();
+        const activeApprovals = Array.from(qrApprovals.values()).filter(
+          (r) => !r.used && nowMs < r.expiresAtMs && (authedOwnerId === null || r.ownerId === authedOwnerId),
+        );
+        const allNames = new Set<string>(defaultTrustedVendors);
+        for (const entry of entries) allNames.add(entry.vendorName);
+        for (const approval of activeApprovals) allNames.add(approval.proposal.vendorName);
+
+        const vendors = Array.from(allNames).map((name) => {
           const vendorEntries = entries.filter((entry) => entry.vendorName === name);
+          const pendingCount = activeApprovals.filter((r) => r.proposal.vendorName === name).length;
           const settledMinor = vendorEntries
             .filter((entry) => entry.status === 'SETTLED')
             .reduce((sum, entry) => sum + entry.amountMinor, 0);
           return {
             name,
-            trusted: true,
-            transactionCount: vendorEntries.length,
+            trusted: trustedSet.has(name),
+            transactionCount: vendorEntries.length + pendingCount,
             settledMinor,
           };
         });
         return reply(200, { vendors, source: 'postgres' });
       }
-      const vendors = defaultTrustedVendors.map((name) => {
+      const allNames = new Set<string>(defaultTrustedVendors);
+      for (const tx of transactions) allNames.add(tx.vendor);
+      const vendors = Array.from(allNames).map((name) => {
         const vendorTxs = transactions.filter((t) => t.vendor === name);
         const totalMinor = vendorTxs.reduce((sum, t) => sum + (t.status === 'Paid' ? t.amountMinor : 0), 0);
         return {
           name,
-          trusted: true,
+          trusted: trustedSet.has(name),
           transactionCount: vendorTxs.length,
           settledMinor: totalMinor,
         };
@@ -1632,7 +1701,11 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
     }
 
     if (options.method === 'GET' && options.url === '/v1/audit') {
-      return reply(200, { events: auditEvents });
+      const visibleEvents =
+        authedOwnerId === null
+          ? auditEvents
+          : auditEvents.filter((e) => !e.ownerId || e.ownerId === authedOwnerId);
+      return reply(200, { events: visibleEvents });
     }
 
     // 9. PayPal Webhook Receiver (public; PayPal's verified signature is the identity).
@@ -1748,8 +1821,8 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       }
       if (ledger instanceof PostgresLedger) {
         try {
-          for (const invoiceId of await ledger.listSettledInvoiceIds()) {
-            settledInvoices.add(invoiceId);
+          for (const key of await ledger.listSettledInvoiceKeys()) {
+            settledInvoices.add(key);
           }
         } catch {
           console.error('Settled-invoice hydration failed; PostgreSQL uniqueness still guards execution.');

@@ -306,7 +306,12 @@ export default function PaymentsPage() {
           singleUseCode={qrModalTx.qrCode.singleUseCode}
           vendorName={qrModalTx.vendor}
           amountFormatted={qrModalTx.amountFormatted}
-          onApproveSuccess={(msg) => markPaidLocally(qrModalTx.id, msg ?? 'Gate re-ran, decision stood')}
+          expiresAtMs={qrModalTx.qrCode.expiresAtMs}
+          expiresInSeconds={qrModalTx.qrCode.expiresInSeconds}
+          onApproveSuccess={(msg) => {
+            markPaidLocally(qrModalTx.id, msg ?? 'Gate re-ran, decision stood');
+            void refreshTransactions();
+          }}
         />
       )}
     </div>

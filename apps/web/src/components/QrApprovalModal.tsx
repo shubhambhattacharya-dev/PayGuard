@@ -10,8 +10,8 @@ interface QrApprovalModalProps {
   singleUseCode: string;
   vendorName: string;
   amountFormatted: string;
-  expiresAtMs?: number;
-  expiresInSeconds?: number;
+  expiresAtMs?: number | undefined;
+  expiresInSeconds?: number | undefined;
   onApproveSuccess: (toastMessage?: string) => void;
 }
 
@@ -53,7 +53,7 @@ export function QrApprovalModal({
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [isOpen, singleUseCode]);
+  }, [isOpen, singleUseCode, expiresAtMs, expiresInSeconds]);
 
   if (!isOpen) return null;
 

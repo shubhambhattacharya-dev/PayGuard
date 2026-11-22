@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { ShieldCheck } from 'lucide-react';
+import { ShieldCheck, ShieldAlert } from 'lucide-react';
 import { AppShell } from '../../components/AppShell';
 
 const API_URL = '/api/payguard';
@@ -48,10 +48,17 @@ export default function VendorsPage() {
               <div key={v.name} className="grid grid-cols-12 gap-3 px-5 py-3.5 items-center text-xs hover:bg-[#15211b] transition-colors">
                 <div className="col-span-5 font-semibold text-[#eaf0eb]">{v.name}</div>
                 <div className="col-span-3">
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[rgba(40,187,131,0.14)] text-[#84e5b3] border border-[rgba(40,187,131,0.3)] text-[11px] font-medium">
-                    <ShieldCheck className="w-3 h-3" />
-                    Trusted Allowlist
-                  </span>
+                  {v.trusted ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[rgba(40,187,131,0.14)] text-[#84e5b3] border border-[rgba(40,187,131,0.3)] text-[11px] font-medium">
+                      <ShieldCheck className="w-3 h-3" />
+                      Trusted Allowlist
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[rgba(255,184,107,0.14)] text-[#ffc477] border border-[rgba(255,184,107,0.3)] text-[11px] font-medium">
+                      <ShieldAlert className="w-3 h-3" />
+                      Untrusted
+                    </span>
+                  )}
                 </div>
                 <div className="col-span-2 font-mono text-[#9aa9a0]">{v.transactionCount}</div>
                 <div className="col-span-2 text-right font-mono font-medium text-[#eaf0eb] tabular-nums">

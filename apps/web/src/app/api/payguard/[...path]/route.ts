@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { request as httpRequest, type IncomingMessage } from 'node:http';
 import { request as httpsRequest } from 'node:https';
-import type { IncomingMessage } from 'node:http';
 
 /**
  * Server-side proxy: the browser talks ONLY to this same-origin route; the
@@ -36,7 +36,8 @@ function rawRequest(
   body: string | undefined,
 ): Promise<RawResponse> {
   return new Promise((resolve, reject) => {
-    const req = httpsRequest(
+    const requestFn = url.startsWith('https://') ? httpsRequest : httpRequest;
+    const req = requestFn(
       url,
       { method, headers },
       (res: IncomingMessage) => {

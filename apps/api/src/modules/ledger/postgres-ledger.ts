@@ -164,6 +164,14 @@ export class PostgresLedger implements LedgerStore {
     return res.rows.map((row) => row.invoice_id);
   }
 
+  /** Owner-scoped settled invoice keys (`ownerId:invoiceId`) matching the composite PK. */
+  public async listSettledInvoiceKeys(): Promise<string[]> {
+    const res = await this.pool.query<{ owner_id: string; invoice_id: string }>(
+      `SELECT owner_id, invoice_id FROM settled_invoices`,
+    );
+    return res.rows.map((row) => `${row.owner_id}:${row.invoice_id}`);
+  }
+
   /** Real settlements for the UI transactions list (newest first). */
   public async listEntries(ownerId: string | null, limit = 100): Promise<{
     settlementId: string; vendorName: string; invoiceId: string; amountMinor: number; remainingBalanceMinor: number; status: string; settledAt: string;

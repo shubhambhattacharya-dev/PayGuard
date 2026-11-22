@@ -361,12 +361,20 @@ const FIXTURE_SCRIPT: readonly string[] = [
 ];
 
 export function createFixtureChatFn(script: readonly string[] = FIXTURE_SCRIPT): AgentChatFn {
+  const isDefaultScript = script === FIXTURE_SCRIPT;
   return async (messages) => {
     // The last non-observation position determines the next scripted step.
     const roundIndex = messages.filter((message) => message.role === 'assistant').length;
     const line = script[roundIndex];
     if (line === undefined) {
       throw new Error('FIXTURE_SCRIPT_EXHAUSTED');
+    }
+    if (isDefaultScript && line.includes('"INV-3155"')) {
+      const userContent = messages.find((m) => m.role === 'user')?.content ?? '';
+      const invMatch = /\bINV-[A-Z0-9-]+\b/.exec(userContent);
+      if (invMatch?.[0]) {
+        return line.replace('"INV-3155"', JSON.stringify(invMatch[0]));
+      }
     }
     return line;
   };

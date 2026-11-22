@@ -15,6 +15,7 @@ interface ApprovalItem {
   amountMinor: number;
   reasonCode: string;
   used: boolean;
+  outcome?: 'APPROVED' | 'REJECTED' | null;
   expired: boolean;
 }
 
@@ -139,14 +140,24 @@ function ApprovalsContent() {
                     <div className="col-span-1">
                       <span
                         className={`inline-block px-2 py-0.5 rounded text-[11px] font-medium border ${
-                          item.used
-                            ? 'bg-[rgba(40,187,131,0.14)] text-[#84e5b3] border-[rgba(40,187,131,0.3)]'
-                            : item.expired
-                              ? 'bg-[#15211b] text-[#6e7d74] border-[rgba(222,242,227,0.12)]'
-                              : 'bg-[rgba(255,184,107,0.14)] text-[#ffc477] border-[rgba(255,184,107,0.3)]'
+                          item.used && item.outcome === 'REJECTED'
+                            ? 'bg-[rgba(255,123,130,0.14)] text-[#ff959a] border-[rgba(255,123,130,0.3)]'
+                            : item.used
+                              ? 'bg-[rgba(40,187,131,0.14)] text-[#84e5b3] border-[rgba(40,187,131,0.3)]'
+                              : item.expired
+                                ? 'bg-[#15211b] text-[#6e7d74] border-[rgba(222,242,227,0.12)]'
+                                : 'bg-[rgba(255,184,107,0.14)] text-[#ffc477] border-[rgba(255,184,107,0.3)]'
                         }`}
                       >
-                        {item.used ? 'Used' : item.expired ? 'Expired' : 'Pending'}
+                        {item.used
+                          ? item.outcome === 'REJECTED'
+                            ? 'Rejected'
+                            : item.outcome === 'APPROVED'
+                              ? 'Approved'
+                              : 'Used'
+                          : item.expired
+                            ? 'Expired'
+                            : 'Pending'}
                       </span>
                     </div>
                     <div className="col-span-2 text-right">
