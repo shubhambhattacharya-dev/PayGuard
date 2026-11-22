@@ -98,8 +98,9 @@ export class PostgresLedger implements LedgerStore {
       }
 
       // Velocity cap enforced INSIDE the transaction against committed settlements,
-      // so parallel executes can never collectively breach the cap.
-      if (this.hourlyVelocityCapMinor !== undefined) {
+      // so parallel autonomous executes can never collectively breach the cap.
+      // Explicit human-in-the-loop QR/dashboard approvals set bypassVelocityCap.
+      if (!input.bypassVelocityCap && this.hourlyVelocityCapMinor !== undefined) {
         const velocityRes = await client.query<{ total_minor: string | null }>(
           `SELECT COALESCE(SUM(amount_minor), 0) AS total_minor
            FROM ledger_entries

@@ -32,6 +32,8 @@ export interface SettleOrderInput {
   readonly proposal: OrderProposal;
   readonly token: ApprovedForExecution;
   readonly idempotencyKey: string;
+  /** True only for explicit human-in-the-loop (QR/dashboard) overrides of autonomous velocity caps. */
+  readonly bypassVelocityCap?: boolean;
 }
 
 export interface LedgerStore {
@@ -126,6 +128,7 @@ export class InMemoryLedger implements LedgerStore {
 
       // 3b. Durable-semantics velocity check (best-effort in-memory demo mode).
       if (
+        !input.bypassVelocityCap &&
         this.hourlyVelocityCapMinor !== undefined &&
         this.getHourlySpentMinor(input.ownerId) + input.proposal.grandTotalMinor >
           this.hourlyVelocityCapMinor

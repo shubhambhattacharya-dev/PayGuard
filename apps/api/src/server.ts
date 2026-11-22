@@ -970,6 +970,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         proposal: record.proposal,
         token: freshToken,
         idempotencyKey: record.idempotencyKey,
+        bypassVelocityCap: true,
       });
 
       if (!settlementResult.success) {
@@ -1352,20 +1353,51 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         const nowMs = Date.now();
         const pendingApprovals = Array.from(qrApprovals.values())
           .filter((r) => !r.used && nowMs < r.expiresAtMs && (authedOwnerId === null || r.ownerId === authedOwnerId))
-          .map((r) => ({
-            id: `qr:${r.code}`,
-            vendor: r.proposal.vendorName,
-            invoiceNumber: r.proposal.invoiceId,
-            amountFormatted: `$${(Number(r.proposal.grandTotalMinor) / 100).toFixed(2)}`,
-            amountMinor: Number(r.proposal.grandTotalMinor),
-            status: 'Review required',
-            policyCode: r.initialReasonCode,
-            dateFormatted: 'Pending',
-            canApproveReject: true,
-            qrCode: r.code,
-            qrExpiresAtMs: r.expiresAtMs,
-            proposal: null,
-          }));
+          .sort((a, b) => b.expiresAtMs - a.expiresAtMs)
+          .map((r) => {
+            const amountMinor = Number(r.proposal.grandTotalMinor);
+            const vendorTrusted = r.trustedVendors.includes(r.proposal.vendorName);
+            const withinAutoCap = amountMinor <= 10_000;
+            const withinVelocity = r.hourlySpentMinor + amountMinor <= 20_000;
+            return {
+              id: `qr:${r.code}`,
+              vendor: r.proposal.vendorName,
+              invoiceNumber: r.proposal.invoiceId,
+              amountFormatted: `$${(amountMinor / 100).toFixed(2)}`,
+              amountMinor,
+              status: 'Review required',
+              policyCode: r.initialReasonCode,
+              dateFormatted: 'Pending',
+              canApproveReject: true,
+              qrCode: r.code,
+              qrExpiresAtMs: r.expiresAtMs,
+              hourlySpentMinor: r.hourlySpentMinor,
+              policyChecks: [
+                {
+                  title: 'Trusted vendor allowlist',
+                  description: vendorTrusted
+                    ? `${r.proposal.vendorName} is on the owner-controlled allowlist.`
+                    : `${r.proposal.vendorName} is not on the trusted vendor allowlist (held for human review).`,
+                  status: vendorTrusted ? 'passed' : 'warning',
+                },
+                {
+                  title: 'Single-order auto-execute cap ($100.00)',
+                  description: withinAutoCap
+                    ? `$${(amountMinor / 100).toFixed(2)} is within the $100.00 auto-execute cap.`
+                    : `$${(amountMinor / 100).toFixed(2)} exceeds the $100.00 auto-execute cap; single-use QR required.`,
+                  status: withinAutoCap ? 'passed' : 'warning',
+                },
+                {
+                  title: 'Rolling 60-min velocity cap ($200.00)',
+                  description: withinVelocity
+                    ? `$${(r.hourlySpentMinor / 100).toFixed(2)} spent + $${(amountMinor / 100).toFixed(2)} stays within $200.00/hr.`
+                    : `$${(r.hourlySpentMinor / 100).toFixed(2)} spent + $${(amountMinor / 100).toFixed(2)} exceeds $200.00/hr.`,
+                  status: withinVelocity ? 'passed' : 'warning',
+                },
+              ],
+              proposal: null,
+            };
+          });
         const settledRows = entries.map((entry) => ({
           id: entry.settlementId,
           vendor: entry.vendorName,
@@ -1480,6 +1512,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
           proposal: tx.proposal,
           token: freshToken,
           idempotencyKey: `idem_tx_${tx.id}`,
+          bypassVelocityCap: true,
         });
 
         if (!settlementResult.success) {
@@ -1641,20 +1674,27 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         if (match?.action === 'HITL_APPROVE' || match?.action === 'TX_APPROVE') return 'APPROVED';
         return null;
       };
+      const nowMs = Date.now();
       const approvals = Array.from(qrApprovals.values())
         .filter((r) => authedOwnerId === null || r.ownerId === authedOwnerId)
+        .sort((a, b) => {
+          const aPending = !a.used && nowMs < a.expiresAtMs ? 0 : 1;
+          const bPending = !b.used && nowMs < b.expiresAtMs ? 0 : 1;
+          if (aPending !== bPending) return aPending - bPending;
+          return b.expiresAtMs - a.expiresAtMs;
+        })
         .map((r) => ({
-        code: r.code,
-        ownerId: r.ownerId,
-        invoiceId: r.proposal.invoiceId,
-        vendorName: r.proposal.vendorName,
-        amountMinor: Number(r.proposal.grandTotalMinor),
-        reasonCode: r.initialReasonCode,
-        used: r.used,
-        outcome: resolveOutcome(r),
-        expired: Date.now() >= r.expiresAtMs,
-        expiresAt: new Date(r.expiresAtMs).toISOString(),
-      }));
+          code: r.code,
+          ownerId: r.ownerId,
+          invoiceId: r.proposal.invoiceId,
+          vendorName: r.proposal.vendorName,
+          amountMinor: Number(r.proposal.grandTotalMinor),
+          reasonCode: r.initialReasonCode,
+          used: r.used,
+          outcome: resolveOutcome(r),
+          expired: nowMs >= r.expiresAtMs,
+          expiresAt: new Date(r.expiresAtMs).toISOString(),
+        }));
       return reply(200, { approvals });
     }
 

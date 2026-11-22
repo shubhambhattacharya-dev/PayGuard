@@ -17,6 +17,8 @@ export interface ApiTransactionRow {
   canApproveReject?: unknown;
   qrCode?: unknown;
   qrExpiresAtMs?: unknown;
+  hourlySpentMinor?: unknown;
+  policyChecks?: unknown;
 }
 
 const VALID_STATUSES: ReadonlySet<TransactionStatus> = new Set<TransactionStatus>([
@@ -96,6 +98,22 @@ export function isValidApiTransactionRow(value: unknown): value is ApiTransactio
 export function mapApiTransactionRow(row: ApiTransactionRow): Transaction | null {
   if (!isValidApiTransactionRow(row)) return null;
   const amountMinor = (row.amountMinor as number | undefined) ?? 0;
+  const parsedPolicyChecks: Transaction['policyChecks'] = Array.isArray(row.policyChecks)
+    ? row.policyChecks
+        .filter(
+          (c): c is { title: string; description: string; status: 'passed' | 'warning' | 'failed' } =>
+            typeof c === 'object' &&
+            c !== null &&
+            isNonEmptyString((c as { title?: unknown }).title) &&
+            isNonEmptyString((c as { description?: unknown }).description) &&
+            ['passed', 'warning', 'failed'].includes(String((c as { status?: unknown }).status)),
+        )
+        .map((c) => ({ title: c.title, description: c.description, status: c.status }))
+    : [];
+  const hasVelocity =
+    typeof row.hourlySpentMinor === 'number' &&
+    Number.isSafeInteger(row.hourlySpentMinor) &&
+    row.hourlySpentMinor >= 0;
   return {
     id: row.id,
     vendor: isNonEmptyString(row.vendor) ? row.vendor : 'Unknown vendor',
@@ -109,8 +127,11 @@ export function mapApiTransactionRow(row: ApiTransactionRow): Transaction | null
     dateFormatted: isNonEmptyString(row.dateFormatted) ? row.dateFormatted : '—',
     canApproveReject: row.canApproveReject,
     reasoningSteps: [],
-    policyChecks: [],
-    policyLimits: { ...KNOWN_POLICY_LIMITS },
+    policyChecks: parsedPolicyChecks,
+    policyLimits: {
+      ...KNOWN_POLICY_LIMITS,
+      ...(hasVelocity ? { vendorVelocitySpent: formatMinorUsd(row.hourlySpentMinor as number) } : {}),
+    },
     ...(isNonEmptyString(row.qrCode)
       ? {
           qrCode: {
