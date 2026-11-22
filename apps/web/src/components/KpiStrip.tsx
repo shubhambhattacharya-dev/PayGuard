@@ -18,7 +18,7 @@ function KpiCard({ label, countText, accentColor }: KpiCardProps) {
   };
 
   return (
-    <div className="p-4 rounded-xl border border-[rgba(222,242,227,0.12)] bg-[#111b17] flex flex-col justify-between gap-2">
+    <div className="p-4 rounded-2xl border border-[rgba(222,242,227,0.12)] bg-[#111b17]/80 backdrop-blur-xl shadow-sm flex flex-col justify-between gap-2 transition-all hover:border-[rgba(200,241,105,0.28)]">
       <div className="flex items-center gap-2">
         <span className={`w-2 h-2 rounded-full ${dotMap[accentColor]}`} />
         <span className="text-xs font-medium text-[#9aa9a0]">{label}</span>

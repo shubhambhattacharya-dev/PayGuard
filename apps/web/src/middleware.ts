@@ -3,14 +3,22 @@ import { NextRequest, NextResponse } from 'next/server';
 /**
  * Dashboard session gate: the web proxy authenticates itself to the API with
  * a server-side key, so WITHOUT this gate any visitor would inherit full
- * admin powers on the money console. Every page and proxy call now requires
- * a session cookie minted by /api/login (password from the
- * PAYGUARD_DASHBOARD_PASSWORD server env — never shipped to the browser).
- * Fail closed: no password configured = dashboard locked.
+ * admin powers on the money console. Every money-moving POST requires a
+ * session cookie minted by /api/login (password from PAYGUARD_DASHBOARD_PASSWORD).
+ *
+ * Non-money sandbox evaluation routes (/v1/evaluate and /v1/agent/run) are
+ * allowed in public demo mode so recruiters and founders can test the policy
+ * gate and fixture agent without signing in, while money-moving settlement
+ * routes (/v1/execute, /v1/hitl/approve, /v1/transactions/:id/approve)
+ * strictly require authentication.
  */
 
 const SESSION_COOKIE = 'pg_session';
 const PUBLIC_PATHS = ['/login', '/api/login', '/api/logout', '/api/session'];
+const PUBLIC_SANDBOX_POST_PATHS = [
+  '/api/payguard/v1/evaluate',
+  '/api/payguard/v1/agent/run',
+];
 
 async function expectedSessionToken(): Promise<string | null> {
   const password = process.env.PAYGUARD_DASHBOARD_PASSWORD ?? '';
@@ -30,11 +38,10 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
 
   const expected = await expectedSessionToken();
   const isRead = req.method === 'GET' || req.method === 'HEAD';
+  const isPublicSandboxPost =
+    req.method === 'POST' && PUBLIC_SANDBOX_POST_PATHS.includes(pathname);
   const isProxy = pathname.startsWith('/api/payguard');
 
-  // Public demo mode: READ-ONLY without a session (founders/judges can view
-  // the ledger, traces and audit trail) — every money-moving POST still
-  // requires a signed-in admin session. View-only never becomes write-only.
   const cookie = expected !== null ? req.cookies.get(SESSION_COOKIE)?.value : undefined;
   const authenticated = expected !== null && cookie === expected;
 
@@ -42,7 +49,7 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     return NextResponse.next();
   }
 
-  if (isProxy && !isRead) {
+  if (isProxy && !isRead && !isPublicSandboxPost) {
     return NextResponse.json(
       {
         error: 'LOGIN_REQUIRED',
@@ -51,7 +58,7 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
       { status: 401 },
     );
   }
-  // Everything else (pages, reads) is public in view-only mode.
+  // Everything else (pages, reads, non-money sandbox evaluations) is public.
   return NextResponse.next();
 }
 

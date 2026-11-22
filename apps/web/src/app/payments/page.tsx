@@ -37,6 +37,7 @@ export default function PaymentsPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
+  const [inspectorOpen, setInspectorOpen] = useState<boolean>(true);
 
   const selectedTx = transactions.find((t) => t.id === selectedTxId) || null;
 
@@ -137,7 +138,11 @@ export default function PaymentsPage() {
           error?: string;
         };
         if (!res.ok || !data.success) {
-          setActionError(data.error === 'LOGIN_REQUIRED' ? 'View-only demo — sign in at /login to approve payments.' : (data.toastMessage ?? data.error ?? `Approve failed (HTTP ${res.status})`));
+          setActionError(
+            data.error === 'LOGIN_REQUIRED'
+              ? 'View-only demo — sign in at /login to approve payments.'
+              : (data.toastMessage ?? data.error ?? `Approve failed (HTTP ${res.status})`),
+          );
           return;
         }
         markPaidLocally(tx.id, data.toastMessage ?? 'Gate re-ran, decision stood');
@@ -156,7 +161,11 @@ export default function PaymentsPage() {
       });
       const data = (await res.json()) as { success?: boolean; error?: string };
       if (!res.ok || !data.success) {
-        setActionError(data.error === 'LOGIN_REQUIRED' ? 'View-only demo — sign in at /login to approve payments.' : (data.error ?? `Reject failed (HTTP ${res.status})`));
+        setActionError(
+          data.error === 'LOGIN_REQUIRED'
+            ? 'View-only demo — sign in at /login to approve payments.'
+            : (data.error ?? `Reject failed (HTTP ${res.status})`),
+        );
         return;
       }
       setTransactions((prev) =>
@@ -197,13 +206,19 @@ export default function PaymentsPage() {
   }, [selectedTx, handleApprove, handleReject]);
 
   return (
-    <div className="min-h-screen bg-surface-canvas flex flex-col md:flex-row">
+    <div className="relative min-h-screen bg-surface-canvas flex flex-col md:flex-row overflow-x-hidden">
+      {/* Ambient radial frosted glow */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed -top-24 left-1/3 h-96 w-96 rounded-full bg-[#c8f169]/5 blur-3xl z-0"
+      />
+
       {/* Collapsible Left Sidebar (desktop) / Top Nav (mobile) */}
       <Sidebar collapsed={sidebarCollapsed} onToggleCollapse={() => setSidebarCollapsed((c) => !c)} />
 
       {/* Main Content Area */}
       <div
-        className={`flex-1 flex flex-col min-h-screen min-w-0 transition-[margin] duration-200 ease-out ${
+        className={`relative z-10 flex-1 flex flex-col min-h-screen min-w-0 transition-[margin] duration-300 ease-in-out ${
           sidebarCollapsed ? 'md:ml-0' : 'md:ml-56'
         }`}
       >
@@ -212,25 +227,29 @@ export default function PaymentsPage() {
           onDismissToast={() => setToastMessage(null)}
           sidebarCollapsed={sidebarCollapsed}
           onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
+          inspectorOpen={inspectorOpen}
+          onToggleInspector={() => setInspectorOpen((v) => !v)}
         />
 
-        <div className="flex-1 flex flex-col 2xl:flex-row overflow-hidden">
+        <div className="flex-1 flex flex-col xl:flex-row overflow-hidden">
           {/* Center Ledger View */}
           <main className="flex-1 p-4 sm:p-6 md:p-8 pb-20 overflow-y-auto min-w-0">
             {/* Title & Core Architectural Law */}
-            <div className="mb-6">
-              <h1 className="text-2xl font-bold text-[#eaf0eb] tracking-tight">Payments</h1>
-              <p className="text-xs text-[#9aa9a0] font-normal mt-0.5">
-                LLM proposes; deterministic policy disposes.
-              </p>
+            <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h1 className="text-2xl font-bold text-[#eaf0eb] tracking-tight">Payments</h1>
+                <p className="text-xs text-[#9aa9a0] font-normal mt-0.5">
+                  LLM proposes; deterministic policy disposes.
+                </p>
+              </div>
             </div>
 
             {actionError && (
-              <div className="mb-4 px-4 py-2.5 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-center justify-between">
+              <div className="mb-4 px-4 py-2.5 rounded-xl bg-rose-500/15 backdrop-blur-md border border-rose-500/30 text-xs text-[#ff959a] flex items-center justify-between">
                 <span>{actionError}</span>
                 <button
                   onClick={() => setActionError(null)}
-                  className="text-rose-600 hover:text-rose-900 font-medium ml-4"
+                  className="text-[#ff959a] hover:underline font-semibold ml-4"
                 >
                   Dismiss
                 </button>
@@ -247,11 +266,14 @@ export default function PaymentsPage() {
                 {/* Live API bridge: capped ReAct agent + deterministic gate */}
                 <LiveGatePanel onAfterRun={() => void refreshTransactions()} />
 
-                {/* AG Grid Transaction Ledger */}
+                {/* Transaction Ledger */}
                 <LedgerGrid
                   transactions={transactions}
                   selectedTxId={selectedTxId}
-                  onSelectTx={(tx) => setSelectedTxId(tx.id)}
+                  onSelectTx={(tx) => {
+                    setSelectedTxId(tx.id);
+                    setInspectorOpen(true);
+                  }}
                   expandedTxIds={expandedTxIds}
                   onToggleExpand={handleToggleExpand}
                   onApprove={(tx) => void handleApprove(tx)}
@@ -262,13 +284,15 @@ export default function PaymentsPage() {
             )}
           </main>
 
-          {/* Right Policy Inspector Drawer */}
-          <PolicyInspector
-            className="2xl:w-96 shrink-0"
-            transaction={selectedTx}
-            onOpenQr={(tx) => setQrModalTx(tx)}
-            onApprove={(tx) => void handleApprove(tx)}
-          />
+          {/* Right Sliding Policy Inspector Window (visible on xl+ laptops or when toggled) */}
+          {inspectorOpen && (
+            <PolicyInspector
+              className="xl:w-96 shrink-0 transition-all duration-300 ease-in-out"
+              transaction={selectedTx}
+              onOpenQr={(tx) => setQrModalTx(tx)}
+              onApprove={(tx) => void handleApprove(tx)}
+            />
+          )}
         </div>
 
         {/* Bottom Keyboard Shortcuts Strip */}

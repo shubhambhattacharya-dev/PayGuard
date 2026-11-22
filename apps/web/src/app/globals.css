@@ -6,9 +6,17 @@
 @import 'ag-grid-community/styles/ag-theme-quartz.css';
 
 :root {
+  color-scheme: light dark;
   --foreground-rgb: 234, 240, 235;
   --background-start-rgb: 11, 18, 16;
   --background-end-rgb: 11, 18, 16;
+
+  &:has(> head > meta[name="color-scheme"][content="dark"]) {
+    color-scheme: dark;
+  }
+  &:has(> head > meta[name="color-scheme"][content="light"]) {
+    color-scheme: light;
+  }
 }
 
 html {
@@ -24,9 +32,92 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Light-mode surface adaptation when user selects Light mode */
+html[data-theme="light"] body {
+  background: #f4f7f5;
+  color: #0f1c16;
+}
+
+html[data-theme="light"] .bg-surface-canvas,
+html[data-theme="light"] .bg-\[\#0b1210\],
+html[data-theme="light"] .bg-\[\#0e1713\] {
+  background-color: #f4f7f5 !important;
+  color: #0f1c16 !important;
+}
+
+html[data-theme="light"] .bg-\[\#0b1210\]\/90,
+html[data-theme="light"] .bg-\[\#101915\]\/95,
+html[data-theme="light"] .bg-\[\#101915\]\/85,
+html[data-theme="light"] .bg-\[\#111b17\]\/80,
+html[data-theme="light"] .bg-\[\#101915\],
+html[data-theme="light"] .bg-\[\#111b17\] {
+  background-color: rgba(255, 255, 255, 0.86) !important;
+  border-color: rgba(16, 40, 28, 0.12) !important;
+  color: #0f1c16 !important;
+  box-shadow: 0 1px 3px rgba(15, 28, 22, 0.05);
+}
+
+html[data-theme="light"] .bg-\[\#15211b\],
+html[data-theme="light"] .bg-\[\#101914\],
+html[data-theme="light"] .bg-\[\#131e18\] {
+  background-color: #eef3ef !important;
+  border-color: rgba(16, 40, 28, 0.12) !important;
+}
+
+html[data-theme="light"] .bg-\[\#1c3428\],
+html[data-theme="light"] .bg-\[\#1c3428\]\/70 {
+  background-color: #dff0e6 !important;
+}
+
+html[data-theme="light"] .text-\[\#eaf0eb\],
+html[data-theme="light"] .text-\[\#dce5de\] {
+  color: #0f1c16 !important;
+}
+
+html[data-theme="light"] .text-\[\#9aa9a0\],
+html[data-theme="light"] .text-\[\#b8c4bb\],
+html[data-theme="light"] .text-\[\#6e7d74\] {
+  color: #4b5e54 !important;
+}
+
+html[data-theme="light"] .text-\[\#c8f169\] {
+  color: #166534 !important;
+}
+
+html[data-theme="light"] .text-\[\#84e5b3\] {
+  color: #047857 !important;
+}
+
+html[data-theme="light"] .text-\[\#ffc477\] {
+  color: #b45309 !important;
+}
+
+html[data-theme="light"] .text-\[\#ff959a\],
+html[data-theme="light"] .text-\[\#ff8f97\] {
+  color: #be123c !important;
+}
+
+/* Natural interaction feedback & WCAG 1.4.11 visible focus rings */
+:where(button) {
+  transition:
+    box-shadow 150ms ease-out,
+    scale 150ms ease-out,
+    background-color 150ms ease-out,
+    border-color 150ms ease-out,
+    color 150ms ease-out;
+}
+
+button:active:not(:disabled) {
+  scale: 0.98;
+}
+
 *:focus-visible {
   outline: 2px solid #c8f169;
   outline-offset: 2px;
+}
+
+html[data-theme="light"] *:focus-visible {
+  outline-color: #15803d;
 }
 
 /* Crisp dark shimmer skeleton (Instagram-style, reduced-motion safe) */
