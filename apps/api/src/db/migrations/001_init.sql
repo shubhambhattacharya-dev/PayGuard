@@ -19,6 +19,9 @@ CREATE TABLE IF NOT EXISTS ledger_entries (
   CONSTRAINT uq_ledger_owner_idempotency UNIQUE (owner_id, idempotency_key)
 );
 
+-- UI transactions list reads real settlements; vendor persisted at settle time.
+ALTER TABLE ledger_entries ADD COLUMN IF NOT EXISTS vendor_name TEXT NOT NULL DEFAULT 'Unknown vendor';
+
 CREATE TABLE IF NOT EXISTS settled_invoices (
   owner_id TEXT NOT NULL,
   invoice_id TEXT NOT NULL,

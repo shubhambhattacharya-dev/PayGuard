@@ -137,7 +137,7 @@ export class PostgresLedger implements LedgerStore {
       const settledAt = new Date().toISOString()
       await client.query('UPDATE ledger_accounts SET balance_minor = $1, updated_at = NOW() WHERE owner_id = $2 ', [newBalance, input.ownerId])
 
-      await client.query('INSERT INTO ledger_entries  (settlement_id, owner_id, idempotency_key, invoice_id, amount_minor, remaining_balance_minor, status, settled_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [settlementId, input.ownerId, input.idempotencyKey, input.proposal.invoiceId, input.proposal.grandTotalMinor, newBalance, 'SETTLED', settledAt])
+      await client.query('INSERT INTO ledger_entries (settlement_id, owner_id, idempotency_key, invoice_id, vendor_name, amount_minor, remaining_balance_minor, status, settled_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)', [settlementId, input.ownerId, input.idempotencyKey, input.proposal.invoiceId, input.proposal.vendorName, input.proposal.grandTotalMinor, newBalance, 'SETTLED', settledAt])
 
       await client.query("COMMIT")
       return { success: true, settlement: { settlementId: settlementId, ownerId: input.ownerId, invoiceId: input.proposal.invoiceId, amountMinor: input.proposal.grandTotalMinor, remainingBalanceMinor: newBalance, settledAt: settledAt, status: 'SETTLED' } }
@@ -154,5 +154,24 @@ export class PostgresLedger implements LedgerStore {
     } finally {
       client.release()
     }
+  }
+
+  /** Real settlements for the UI transactions list (newest first). */
+  public async listEntries(ownerId: string | null, limit = 100): Promise<{
+    settlementId: string; vendorName: string; invoiceId: string; amountMinor: number; remainingBalanceMinor: number; status: string; settledAt: string;
+  }[]> {
+    const base = 'SELECT settlement_id, vendor_name, invoice_id, amount_minor, remaining_balance_minor, status, settled_at FROM ledger_entries'
+    const res = ownerId
+      ? await this.pool.query(`${base} WHERE owner_id = $1 ORDER BY settled_at DESC LIMIT ${limit}`, [ownerId])
+      : await this.pool.query(`${base} ORDER BY settled_at DESC LIMIT ${limit}`)
+    return res.rows.map((r: { settlement_id: string; vendor_name: string; invoice_id: string; amount_minor: string; remaining_balance_minor: string; status: string; settled_at: Date | string }) => ({
+      settlementId: r.settlement_id,
+      vendorName: r.vendor_name,
+      invoiceId: r.invoice_id,
+      amountMinor: Number(r.amount_minor),
+      remainingBalanceMinor: Number(r.remaining_balance_minor),
+      status: r.status,
+      settledAt: r.settled_at instanceof Date ? r.settled_at.toISOString() : String(r.settled_at),
+    }))
   }
 }

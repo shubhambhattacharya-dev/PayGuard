@@ -10,7 +10,6 @@ import { PolicyInspector } from '../../components/PolicyInspector';
 import { QrApprovalModal } from '../../components/QrApprovalModal';
 import { KeyboardShortcutsBar } from '../../components/KeyboardShortcutsBar';
 import { LedgerWorkspaceSkeleton } from '../../components/Skeleton';
-import { INITIAL_TRANSACTIONS } from '../../lib/mockData';
 import { PolicyReasonCode, Transaction, TransactionStatus } from '../../lib/types';
 
 const API_URL = '/api/payguard';
@@ -29,13 +28,13 @@ interface ApiTransactionRow {
 }
 
 export default function PaymentsPage() {
-  const [transactions, setTransactions] = useState<Transaction[]>(INITIAL_TRANSACTIONS);
-  const [selectedTxId, setSelectedTxId] = useState<string>(INITIAL_TRANSACTIONS[0]?.id ?? '');
-  const [expandedTxIds, setExpandedTxIds] = useState<Set<string>>(new Set([INITIAL_TRANSACTIONS[0]?.id ?? '']));
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [selectedTxId, setSelectedTxId] = useState<string>('');
+  const [expandedTxIds, setExpandedTxIds] = useState<Set<string>>(new Set());
   const [qrModalTx, setQrModalTx] = useState<Transaction | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
   const [inspectorOpen, setInspectorOpen] = useState<boolean>(true);
 
@@ -46,26 +45,15 @@ export default function PaymentsPage() {
       const res = await fetch(`${API_URL}/v1/transactions`, {
         signal: AbortSignal.timeout(2500),
       });
-      if (!res.ok) return;
+      if (!res.ok) throw new Error(`Transactions request failed (${res.status})`);
       const data = (await res.json()) as { transactions?: ApiTransactionRow[] } | null;
-      if (!data?.transactions) return;
+      if (!Array.isArray(data?.transactions)) throw new Error('Invalid transactions response');
       const apiTransactions = data.transactions;
-      const apiById = new Map(apiTransactions.map((t) => [t.id, t]));
-      setTransactions((prev) => {
-        const prevIds = new Set(prev.map((p) => p.id));
-        const updated = prev.map((item) => {
-          const live = apiById.get(item.id);
-          if (!live) return item;
-          return {
-            ...item,
-            status: live.status,
-            policyCode: live.policyCode,
-            canApproveReject: live.canApproveReject,
-          };
-        });
-        const dynamicRows: Transaction[] = apiTransactions
-          .filter((live) => !prevIds.has(live.id) && live.vendor && live.invoiceNumber)
-          .map((live) => ({
+      const validStatuses = new Set<TransactionStatus>(['Review required', 'Paid', 'On hold', 'Blocked']);
+      const validPolicies = new Set<PolicyReasonCode>(['HOLD_OVER_CAP', 'AUTO_EXECUTED', 'HOLD_VENDOR_DESTINATION', 'HOLD_VENDOR_UNTRUSTED', 'REJECT_PROMPT_INJECTION', 'REJECT_UNCATALOGUED_SKU', 'REJECT_MATH_MISMATCH']);
+      const rows: Transaction[] = apiTransactions.filter((live) =>
+        typeof live.id === 'string' && live.id.length > 0 && typeof live.vendor === 'string' && live.vendor.trim().length > 0 && typeof live.invoiceNumber === 'string' && live.invoiceNumber.trim().length > 0 && Number.isSafeInteger(live.amountMinor) && (live.amountMinor ?? -1) >= 0 && validStatuses.has(live.status) && validPolicies.has(live.policyCode) && typeof live.canApproveReject === 'boolean'
+      ).map((live) => ({
             id: live.id,
             vendor: live.vendor ?? 'Unknown Vendor',
             invoiceNumber: live.invoiceNumber ?? live.id,
@@ -87,10 +75,13 @@ export default function PaymentsPage() {
               ? { qrCode: { singleUseCode: live.qrCode, expiresInSeconds: 600 } }
               : {}),
           }));
-        return [...dynamicRows, ...updated];
-      });
+      setTransactions(rows);
+      setSelectedTxId((current) => rows.some((row) => row.id === current) ? current : rows[0]?.id ?? '');
+      setExpandedTxIds((current) => new Set([...current].filter((id) => rows.some((row) => row.id === id))));
     } catch {
-      // API offline: keep seeded transactions visible with offline badge in Header
+      setTransactions([]);
+      setSelectedTxId('');
+      setExpandedTxIds(new Set());
     } finally {
       setIsLoading(false);
     }
@@ -280,6 +271,7 @@ export default function PaymentsPage() {
                   onReject={(tx) => void handleReject(tx)}
                   onOpenQr={(tx) => setQrModalTx(tx)}
                 />
+                {transactions.length === 0 && <p className="mt-4 text-center text-xs text-[#9aa9a0]">No valid transactions returned by the API.</p>}
               </>
             )}
           </main>

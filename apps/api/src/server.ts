@@ -12,6 +12,7 @@ import {
 import { evaluatePolicy } from './modules/policy/gate.js';
 import { verifyQuoteGrounding, type QuoteCitation } from './modules/policy/quote-matcher.js';
 import { InMemoryLedger, LedgerStore, type SettlementResult } from './modules/ledger/ledger.js';
+import { PostgresLedger } from './modules/ledger/postgres-ledger.js';
 import type { DurableStore } from './modules/ledger/durability.js';
 import {
   verifyPayPalWebhookSignature,
@@ -1285,8 +1286,29 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       });
     }
 
-    // 7. Ledger Transactions & Live Approve/Reject Routes (for UI Dashboard)
+    // 7. Ledger Transactions & Live Approve/Reject Routes (for UI Dashboard).
+    // Durable mode: real settlements read from PostgreSQL. Demo mode: seed list.
     if (options.method === 'GET' && options.url === '/v1/transactions') {
+      if (ledger instanceof PostgresLedger) {
+        const entries = await ledger.listEntries(authedOwnerId);
+        return reply(200, {
+          transactions: entries.map((entry) => ({
+            id: entry.settlementId,
+            vendor: entry.vendorName,
+            invoiceNumber: entry.invoiceId,
+            amountFormatted: `$${(entry.amountMinor / 100).toFixed(2)}`,
+            amountMinor: entry.amountMinor,
+            status: 'Paid',
+            policyCode: 'AUTO_EXECUTED',
+            dateFormatted: new Date(entry.settledAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+            canApproveReject: false,
+            proposal: null,
+          })),
+          executionMode: serverOptions.paypalExecutor ? 'paypal_sandbox' : 'in_memory_simulated',
+          paypalSandboxReady: Boolean(serverOptions.paypalExecutor),
+          source: 'postgres',
+        });
+      }
       return reply(200, {
         transactions,
         executionMode: serverOptions.paypalExecutor ? 'paypal_sandbox' : 'in_memory_simulated',
