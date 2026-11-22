@@ -45,7 +45,6 @@ export function LedgerGrid({
       case 'AUTO_EXECUTED':
         return 'bg-[rgba(40,187,131,0.12)] text-[#84e5b3] border-[rgba(40,187,131,0.25)]';
       case 'HOLD_OVER_CAP':
-        return 'bg-[#15211b] text-[#b8c4bb] border-[rgba(222,242,227,0.14)]';
       case 'HOLD_VENDOR_DESTINATION':
       case 'HOLD_VENDOR_UNTRUSTED':
         return 'bg-[#15211b] text-[#b8c4bb] border-[rgba(222,242,227,0.14)]';
@@ -57,7 +56,7 @@ export function LedgerGrid({
   };
 
   return (
-    <div className="bg-[#111b17] rounded-xl border border-[rgba(222,242,227,0.12)] overflow-x-auto">
+    <div className="bg-[#111b17]/85 backdrop-blur-xl rounded-2xl border border-[rgba(222,242,227,0.12)] shadow-sm overflow-hidden">
       <div className="divide-y divide-[rgba(222,242,227,0.08)] md:hidden">
         {transactions.map((tx) => {
           const isSelected = tx.id === selectedTxId;
@@ -77,7 +76,7 @@ export function LedgerGrid({
                   </span>
                   <span className="shrink-0 text-right">
                     <span className="block text-sm font-semibold text-[#eaf0eb]">{tx.amountFormatted}</span>
-                    <span className={`mt-1 inline-block rounded border px-2 py-0.5 text-[11px] font-medium ${getStatusBadge(tx.status)}`}>
+                    <span className={`mt-1 inline-block rounded-full border px-2 py-0.5 text-[11px] font-medium ${getStatusBadge(tx.status)}`}>
                       {tx.status}
                     </span>
                   </span>
@@ -85,7 +84,7 @@ export function LedgerGrid({
               </button>
 
               <div className="mt-3 flex items-center justify-between gap-2">
-                <span className={`min-w-0 truncate rounded border px-2 py-1 font-mono text-[10px] ${getPolicyCodeBadge(tx.policyCode)}`}>
+                <span className={`min-w-0 truncate rounded-md border px-2 py-1 font-mono text-[10px] ${getPolicyCodeBadge(tx.policyCode)}`}>
                   {tx.policyCode}
                 </span>
                 <button
@@ -103,14 +102,14 @@ export function LedgerGrid({
                   <button
                     type="button"
                     onClick={() => onApprove(tx)}
-                    className="min-h-10 rounded-lg bg-emerald-700 px-3 text-xs font-semibold text-white hover:bg-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2"
+                    className="min-h-10 rounded-xl bg-emerald-700 px-3 text-xs font-semibold text-white hover:bg-emerald-800"
                   >
                     Approve
                   </button>
                   <button
                     type="button"
                     onClick={() => onReject(tx)}
-                    className="min-h-10 rounded-lg bg-rose-600 px-3 text-xs font-semibold text-white hover:bg-rose-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-600 focus-visible:ring-offset-2"
+                    className="min-h-10 rounded-xl bg-rose-600 px-3 text-xs font-semibold text-white hover:bg-rose-700"
                   >
                     Reject
                   </button>
@@ -118,7 +117,7 @@ export function LedgerGrid({
                     type="button"
                     onClick={() => onOpenQr(tx)}
                     aria-label={`Open QR approval for ${tx.invoiceNumber}`}
-                    className="flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-[#1d2d25] text-[#9aa9a0] hover:text-[#c8f169] hover:bg-[#1c3428] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c8f169]"
+                    className="flex min-h-10 min-w-10 items-center justify-center rounded-xl border border-[#1d2d25] text-[#9aa9a0] hover:text-[#c8f169] hover:bg-[#1c3428]"
                   >
                     <QrCode className="h-4 w-4" aria-hidden="true" />
                   </button>
@@ -145,9 +144,9 @@ export function LedgerGrid({
         })}
       </div>
 
-      <div className="hidden min-w-[760px] md:block">
-        {/* Table Header */}
-        <div className="grid grid-cols-12 gap-3 px-5 py-3 border-b border-[rgba(222,242,227,0.12)] bg-[#101914] text-[11px] font-medium text-[#9aa9a0] uppercase tracking-wider select-none">
+      <div className="hidden md:block">
+        {/* Table Header (No forced horizontal scrollbar) */}
+        <div className="grid grid-cols-12 gap-2.5 px-4 py-3 border-b border-[rgba(222,242,227,0.12)] bg-[#101914]/90 text-[11px] font-semibold text-[#9aa9a0] uppercase tracking-wider select-none">
           <div className="col-span-3">Vendor</div>
           <div className="col-span-2">Invoice #</div>
           <div className="col-span-1">Amount</div>
@@ -167,18 +166,18 @@ export function LedgerGrid({
                 {/* Main Row */}
                 <div
                   onClick={() => onSelectTx(tx)}
-                  className={`grid grid-cols-12 gap-3 px-5 py-3.5 items-center text-xs cursor-pointer ${
-                    isSelected ? 'bg-[#1c3428]/70' : 'hover:bg-[#15211b]'
+                  className={`grid grid-cols-12 gap-2.5 px-4 py-3.5 items-center text-xs cursor-pointer transition-colors ${
+                    isSelected ? 'bg-[#1c3428]/70' : 'hover:bg-[#15211b]/80'
                   }`}
                 >
                   {/* Vendor Column with Expand Caret */}
-                  <div className="col-span-3 flex items-center gap-2.5">
+                  <div className="col-span-3 flex items-center gap-2 min-w-0">
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
                         onToggleExpand(tx.id);
                       }}
-                      className="p-1 hover:bg-[#1c3428] rounded text-[#6e7d74] hover:text-[#c8f169]"
+                      className="p-1 hover:bg-[#1c3428] rounded-md text-[#6e7d74] hover:text-[#c8f169] shrink-0"
                       aria-label={isExpanded ? 'Collapse row' : 'Expand row'}
                     >
                       {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
@@ -187,16 +186,16 @@ export function LedgerGrid({
                   </div>
 
                   {/* Invoice # */}
-                  <div className="col-span-2 font-mono text-[#9aa9a0]">{tx.invoiceNumber}</div>
+                  <div className="col-span-2 font-mono text-[#9aa9a0] truncate">{tx.invoiceNumber}</div>
 
                   {/* Amount */}
-                  <div className="col-span-1 font-medium text-[#eaf0eb]">{tx.amountFormatted}</div>
+                  <div className="col-span-1 font-semibold text-[#eaf0eb] tabular-nums">{tx.amountFormatted}</div>
 
                   {/* Status Pill */}
                   <div className="col-span-2">
                     <span
-                      className={`inline-block px-2.5 py-0.5 rounded text-[11px] font-medium border ${getStatusBadge(
-                        tx.status
+                      className={`inline-block px-2.5 py-0.5 rounded-full text-[11px] font-medium border ${getStatusBadge(
+                        tx.status,
                       )}`}
                     >
                       {tx.status}
@@ -204,10 +203,10 @@ export function LedgerGrid({
                   </div>
 
                   {/* Policy Code Pill */}
-                  <div className="col-span-2">
+                  <div className="col-span-2 min-w-0">
                     <span
-                      className={`inline-block px-2 py-0.5 rounded text-[10px] font-mono border truncate max-w-full ${getPolicyCodeBadge(
-                        tx.policyCode
+                      className={`inline-block px-2 py-0.5 rounded-md text-[10px] font-mono border truncate max-w-full ${getPolicyCodeBadge(
+                        tx.policyCode,
                       )}`}
                     >
                       {tx.policyCode}
@@ -220,49 +219,51 @@ export function LedgerGrid({
                       <>
                         <button
                           onClick={() => onApprove(tx)}
-                          className="px-2.5 py-1 bg-emerald-700 hover:bg-emerald-800 text-white font-medium text-[11px] rounded transition-colors shadow-xs"
+                          className="px-2.5 py-1 bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-[11px] rounded-lg transition-colors shadow-xs"
                         >
                           Approve
                         </button>
                         <button
                           onClick={() => onReject(tx)}
-                          className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white font-medium text-[11px] rounded transition-colors shadow-xs"
+                          className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white font-semibold text-[11px] rounded-lg transition-colors shadow-xs"
                         >
                           Reject
                         </button>
                         <button
                           onClick={() => onOpenQr(tx)}
-                          className="p-1 text-[#9aa9a0] hover:text-[#c8f169] hover:bg-[#1c3428] rounded transition-colors"
+                          className="p-1 text-[#9aa9a0] hover:text-[#c8f169] hover:bg-[#1c3428] rounded-lg transition-colors"
                           title="One-Time Mobile QR Approval"
                         >
                           <QrCode className="w-3.5 h-3.5" />
                         </button>
                       </>
                     ) : (
-                      <span className="text-slate-300 font-mono pr-2">—</span>
+                      <span className="text-[#6e7d74] font-mono pr-2">—</span>
                     )}
                   </div>
                 </div>
 
-                {/* Master-Detail Expanded Reasoning Drawer (Agent reasoning 4 rounds) */}
+                {/* Master-Detail Expanded Reasoning Drawer */}
                 {isExpanded && tx.reasoningSteps.length > 0 && (
-                  <div className="bg-[#0e1713] px-12 py-4 border-t border-[rgba(222,242,227,0.08)]">
-                    <div className="text-xs font-semibold text-[#eaf0eb] mb-3">Agent reasoning (4 rounds)</div>
-                    <div className="space-y-2.5">
+                  <div className="bg-[#0e1713]/90 px-10 py-3.5 border-t border-[rgba(222,242,227,0.08)]">
+                    <div className="text-[11px] font-semibold text-[#eaf0eb] uppercase tracking-wider mb-2.5">
+                      Agent reasoning ({tx.reasoningSteps.length} rounds)
+                    </div>
+                    <div className="space-y-2">
                       {tx.reasoningSteps.map((step) => {
                         const badgeColor =
-                          step.round === 4 && tx.status === 'Review required'
+                          step.round === tx.reasoningSteps.length && tx.status === 'Review required'
                             ? 'bg-[rgba(255,184,107,0.14)] text-[#ffc477] border-[rgba(255,184,107,0.3)]'
                             : 'bg-[rgba(40,187,131,0.14)] text-[#84e5b3] border-[rgba(40,187,131,0.3)]';
 
                         return (
-                          <div key={step.round} className="flex items-start gap-4 text-xs">
+                          <div key={step.round} className="flex items-start gap-3 text-xs">
                             <span
-                              className={`w-6 h-6 rounded flex items-center justify-center font-bold text-[10px] border shrink-0 ${badgeColor}`}
+                              className={`w-5 h-5 rounded-md flex items-center justify-center font-bold text-[10px] border shrink-0 ${badgeColor}`}
                             >
                               R{step.round}
                             </span>
-                            <div className="flex-1">
+                            <div className="flex-1 min-w-0">
                               <span className="font-semibold text-[#c8f169] mr-2 font-mono">{step.name}</span>
                               <span className="text-[#9aa9a0]">{step.summary}</span>
                             </div>
@@ -278,6 +279,5 @@ export function LedgerGrid({
         </div>
       </div>
     </div>
-
   );
 }

@@ -35,7 +35,7 @@ export default function PaymentsPage() {
   const [qrModalTx, setQrModalTx] = useState<Transaction | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
   const [inspectorOpen, setInspectorOpen] = useState<boolean>(true);
 
