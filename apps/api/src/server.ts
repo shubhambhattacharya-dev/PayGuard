@@ -124,17 +124,21 @@ export interface LedgerTransactionRecord {
 }
 
 const PROMPT_INJECTION_PATTERNS = [
-  /(?:ignore|disregard|forget|bypass|override|skip)\s+(?:all\s+|any\s+|your\s+|the\s+)?(?:previous\s+|prior\s+|above\s+|system\s+|safety\s+|security\s+|policy\s+)?(?:instructions?|rules?|polic(?:y|ies)|limits?|caps?|gates?|approvals?|checks?|guards?|constraints?|restrictions?)/i,
-  /without\s+(?:human\s+|admin\s+|manager\s+|qr\s+)?(?:approval|review|verification)/i,
-  /do\s+not\s+(?:require|wait\s+for|ask\s+for)\s+(?:human\s+|qr\s+)?approval/i,
-  /system\s+(?:override|prompt)/i,
-  /pre-approved\s+for\s+\$/i,
-  /auto-approval\s+(?:limit|cap)\s+(?:raised|increased)/i,
-  /(BEGIN|END)_VENDOR_DOCUMENT/i,
+  /(?:ignore|disregard|forget|bypass|override|skip|disable)\s+(?:all\s+|any\s+|your\s+|the\s+)?(?:previous\s+|prior\s+|above\s+|system\s+|safety\s+|security\s+|policy\s+)?(?:instructions?|rules?|polic(?:y|ies)|limits?|caps?|gates?|approvals?|checks?|guards?|constraints?|restrictions?|prompts?)/i,
+  /(?:new\s+instructions?\s*:|you\s+are\s+now\s+(?:a|an)\b|developer\s+mode|\bjailbreak\b)/i,
+  /\b(?:send|pay|wire|transfer|give|credit|deposit|route|divert)\s+(?:all\s+(?:funds|money)\s+to\b|(?:funds|money|payment)\s+to\s+(?:my|attacker|hacker)\b|(?:me|us)\s+\$?\d[\d,]*(?:\.\d{1,2})?(?:\s+for\s+free)?|(?:to\s+)?my\s+account\b)/i,
+  /\b(?:send|pay|wire|transfer|approve)\b[^.\n]{0,80}\bfor\s+free\b/i,
+  /\b(?:send|wire|transfer|pay|approve)\s+\$?\d[\d,]*(?:\.\d{1,2})?\s+(?:immediately|now|urgently|right\s+away|directly)\b/i,
+  /without\s+(?:any\s+|human\s+|admin\s+|manager\s+|qr\s+)?(?:approval|review|verification|check)/i,
+  /\bno\s+(?:human\s+|qr\s+|admin\s+)?(?:approval|review|verification)\s+(?:is\s+)?(?:needed|required|necessary)\b/i,
+  /do\s+not\s+(?:require|wait\s+for|ask\s+for|run|check)\s+(?:human\s+|qr\s+|the\s+)?(?:approval|policy|gate|limit)/i,
+  /\b(?:pre[-\s]?approved\s+for\s+\$?|already\s+approved\s+by\b|approved\s+by\s+(?:the\s+)?(?:ceo|cfo|cto|admin|management|director|board)\b|auto[-\s]?approve\s+(?:this|all|immediately|now)\b|mark\s+(?:this\s+)?(?:invoice\s+|payment\s+|order\s+)?as\s+(?:approved|paid|trusted)\b)/i,
+  /\b(?:auto[-\s]?approval|spending|hourly|velocity|order)\s+(?:limit|cap)\s+(?:is\s+now|raised|increased|set\s+to|changed\s+to)\b/i,
+  /system\s+(?:override|prompt)|<\s*\/?\s*system\s*>|\[SYSTEM\]|\[INST\]|(BEGIN|END)_VENDOR_DOCUMENT/i,
 ];
 
 export function detectPromptInjection(text: string): string | null {
-  const normalized = text.normalize('NFKC').replace(/[\u200B-\u200D\uFEFF]/g, '');
+  const normalized = text.normalize('NFKC').replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/g, '');
   for (const pattern of PROMPT_INJECTION_PATTERNS) {
     const match = normalized.match(pattern);
     if (match) {

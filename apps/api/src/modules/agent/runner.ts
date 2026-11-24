@@ -370,10 +370,42 @@ export function createFixtureChatFn(script: readonly string[] = FIXTURE_SCRIPT):
   const isDefaultScript = script === FIXTURE_SCRIPT;
   return async (messages) => {
     const userContent = messages.find((m) => m.role === 'user')?.content ?? '';
-    const activeScript =
-      isDefaultScript && (userContent.includes('Lumen Office') || userContent.includes('LM-CHR-02'))
-        ? CHAIR_FIXTURE_SCRIPT
-        : script;
+    let activeScript: readonly string[] = script;
+    if (isDefaultScript) {
+      const skuQtyMatch = /\(([A-Z0-9-]+)\)\s*x(\d+)/.exec(userContent);
+      const matchedItem = skuQtyMatch ? DEFAULT_CATALOG.find((item) => item.sku === skuQtyMatch[1]) : undefined;
+      if (matchedItem && skuQtyMatch) {
+        const qty = Math.max(1, Math.min(10_000, Number.parseInt(skuQtyMatch[2] ?? '1', 10) || 1));
+        const vendor = /Vendor:\s*([^|\n]+)/i.exec(userContent)?.[1]?.trim() || 'Cedar Supply';
+        const inv = /\bINV-[A-Z0-9-]+\b/.exec(userContent)?.[0] || 'INV-3155';
+        activeScript = [
+          JSON.stringify({ tool: 'search_catalog', args: { query: matchedItem.sku } }),
+          JSON.stringify({
+            tool: 'calculate_total',
+            args: { items: [{ sku: matchedItem.sku, quantity: qty, unitPriceMinor: matchedItem.unitPriceMinor }] },
+          }),
+          JSON.stringify({
+            tool: 'draft_order',
+            args: {
+              invoiceId: inv,
+              vendorName: vendor,
+              currency: 'USD',
+              lines: [
+                {
+                  sku: matchedItem.sku,
+                  description: matchedItem.name,
+                  quantity: qty,
+                  unitPriceMinor: matchedItem.unitPriceMinor,
+                  taxBps: 0,
+                },
+              ],
+            },
+          }),
+        ];
+      } else if (userContent.includes('Lumen Office') || userContent.includes('LM-CHR-02')) {
+        activeScript = CHAIR_FIXTURE_SCRIPT;
+      }
+    }
     // The last non-observation position determines the next scripted step.
     const roundIndex = messages.filter((message) => message.role === 'assistant').length;
     const line = activeScript[roundIndex];

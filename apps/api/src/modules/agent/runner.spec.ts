@@ -223,6 +223,18 @@ describe('ReAct loop with hard cap (runner.ts)', () => {
     expect(obs.summary).toContain('REJECT_UNCATALOGUED_SKU');
   });
 
+  it('createFixtureChatFn dynamically drafts structured form invoices for any catalog SKU, quantity, and vendor', async () => {
+    const result = await runAgentLoop({
+      goal: 'Pay the Shubham Supplies invoice INV-7788',
+      invoiceText: 'Vendor: Shubham Supplies | Invoice INV-7788 | Toner Cartridge (CD-INK-77) x2 @ $89.00 | Total $178.00',
+      chat: createFixtureChatFn(),
+    });
+    expect(result.terminalReason).toBe('DRAFT_ORDER_CREATED');
+    expect(result.proposal?.vendorName).toBe('Shubham Supplies');
+    expect(result.proposal?.invoiceId).toBe('INV-7788');
+    expect(result.proposal?.grandTotalMinor).toBe(17800);
+  });
+
   it('recovers valid tool JSON from Groq 400 tool_use_failed (Harmony failed_generation)', async () => {
     const fetchMock: typeof fetch = async () =>
       new Response(
