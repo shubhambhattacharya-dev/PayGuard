@@ -1,6 +1,7 @@
-import { randomUUID } from 'node:crypto';
 import type { MoneyMinor } from './money.js';
 import { OrderProposalSchema, type OrderProposal } from './order.js';
+
+const randomUUID = (): string => globalThis.crypto.randomUUID();
 
 // =====================================================
 // DECISION STATES

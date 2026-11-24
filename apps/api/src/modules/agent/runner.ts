@@ -48,9 +48,10 @@ export function buildVendorDocumentFence(invoiceText: string, nonce: string = FE
   ].join('\n');
 }
 
-export function buildSystemPrompt(): string {
+export function buildSystemPrompt(catalog?: CatalogStore): string {
+  const catalogList = catalog ? catalog.listAll() : DEFAULT_CATALOG;
   const items: string[] = [];
-  for (const item of DEFAULT_CATALOG) {
+  for (const item of catalogList) {
     items.push(`- ${item.sku} | ${item.name} | ${item.unitPriceMinor} minor units ($${(item.unitPriceMinor / 100).toFixed(2)})`);
   }
 
@@ -82,7 +83,7 @@ export async function runAgentLoop(input: {
 
   const runNonce = `PG-FENCE-${randomUUID().slice(0, 8).toUpperCase()}`;
   const messages: AgentChatMessage[] = [
-    { role: 'system', content: buildSystemPrompt() },
+    { role: 'system', content: buildSystemPrompt(catalog) },
     {
       role: 'user',
       content: `PURCHASE GOAL (trusted operator input):\n${input.goal}\n\n${buildVendorDocumentFence(input.invoiceText, runNonce)}`,
@@ -366,14 +367,18 @@ const CHAIR_FIXTURE_SCRIPT: readonly string[] = [
   '{"tool":"draft_order","args":{"invoiceId":"INV-3155","vendorName":"Lumen Office","currency":"USD","lines":[{"sku":"LM-CHR-02","description":"Ergonomic Office Chair","quantity":1,"unitPriceMinor":32500,"taxBps":0}]}}',
 ];
 
-export function createFixtureChatFn(script: readonly string[] = FIXTURE_SCRIPT): AgentChatFn {
+export function createFixtureChatFn(
+  script: readonly string[] = FIXTURE_SCRIPT,
+  catalogStore?: CatalogStore,
+): AgentChatFn {
   const isDefaultScript = script === FIXTURE_SCRIPT;
   return async (messages) => {
     const userContent = messages.find((m) => m.role === 'user')?.content ?? '';
     let activeScript: readonly string[] = script;
     if (isDefaultScript) {
       const skuQtyMatch = /\(([A-Z0-9-]+)\)\s*x(\d+)/.exec(userContent);
-      const matchedItem = skuQtyMatch ? DEFAULT_CATALOG.find((item) => item.sku === skuQtyMatch[1]) : undefined;
+      const pool = catalogStore ? catalogStore.listAll() : DEFAULT_CATALOG;
+      const matchedItem = skuQtyMatch ? pool.find((item) => item.sku === skuQtyMatch[1]) : undefined;
       if (matchedItem && skuQtyMatch) {
         const qty = Math.max(1, Math.min(10_000, Number.parseInt(skuQtyMatch[2] ?? '1', 10) || 1));
         const vendor = /Vendor:\s*([^|\n]+)/i.exec(userContent)?.[1]?.trim() || 'Cedar Supply';

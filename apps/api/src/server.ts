@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http';
-import { randomUUID, randomBytes } from 'node:crypto';
+import { randomUUID, randomBytes, randomInt } from 'node:crypto';
+import { z } from 'zod';
 import {
   OrderProposalSchema,
   ReasonCode,
@@ -153,6 +154,51 @@ export type ApiKeyRole = 'admin' | 'proposer' | 'approver';
 
 const MONEY_MOVING_ROLES: readonly ApiKeyRole[] = ['approver', 'admin'];
 
+const VendorOtpRequestSchema = z
+  .object({
+    vendorName: z
+      .string()
+      .trim()
+      .min(2, 'Vendor name must be at least 2 characters')
+      .max(80, 'Vendor name must not exceed 80 characters')
+      .regex(
+        /^(?=.*[A-Za-z])[A-Za-z0-9 &.,'-]+$/,
+        'Vendor name must contain letters (numbers-only or special symbols are not allowed)',
+      ),
+    whatsappNumber: z
+      .string()
+      .trim()
+      .regex(/^\+?[1-9]\d{9,14}$/, 'Enter a valid 10–15 digit WhatsApp number (e.g. +919876543210)'),
+    itemName: z
+      .string()
+      .trim()
+      .min(2, 'Item name must be at least 2 characters')
+      .max(120)
+      .regex(/^(?=.*[A-Za-z])[A-Za-z0-9 &.,'()/-]+$/, 'Item name must contain letters')
+      .optional(),
+    unitPriceMinor: z.number().int().positive().max(50_000_000).optional(),
+  })
+  .strict();
+
+const VendorOtpVerifySchema = z
+  .object({
+    challengeId: z.string().trim().min(1),
+    otp: z.string().trim().regex(/^\d{6}$/, 'OTP must be a 6-digit code'),
+  })
+  .strict();
+
+interface VendorOtpChallenge {
+  readonly challengeId: string;
+  readonly vendorName: string;
+  readonly whatsappNumber: string;
+  readonly itemName?: string;
+  readonly unitPriceMinor?: number;
+  readonly otp: string;
+  readonly expiresAtMs: number;
+  attempts: number;
+  used: boolean;
+}
+
 export interface BuildServerOptions {
   /**
    * PayPal rail behind the policy gate. When omitted, /v1/execute settles the
@@ -229,6 +275,8 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
   const capabilityVault = new Map<string, ApprovedForExecution>();
   const qrApprovals = new Map<string, QrApprovalRecord>();
   const inFlightQrCodes = new Set<string>();
+  const vendorOtpChallenges = new Map<string, VendorOtpChallenge>();
+  const vendorPhones = new Map<string, string>();
   const settledExecutionEnvelopes = new Map<string, Record<string, unknown>>();
   // Velocity is read from the ledger store (durable under PostgreSQL, receipt-derived in memory).
   const getHourlySpentMinor = async (ownerId: string): Promise<number> =>
@@ -1164,7 +1212,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       let chat: AgentChatFn | null;
       let provider: ProviderName;
       if (body.model === 'fixture') {
-        chat = createFixtureChatFn();
+        chat = createFixtureChatFn(undefined, catalog);
         provider = 'fixture';
       } else if (serverOptions.agentChat !== undefined) {
         chat = serverOptions.agentChat;
@@ -1784,6 +1832,137 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       return reply(200, { approvals });
     }
 
+    if (options.method === 'POST' && options.url === '/v1/vendors/request-otp') {
+      const otpRoleBlocked = requireMoneyRole();
+      if (otpRoleBlocked) {
+        return otpRoleBlocked;
+      }
+      const parsed = VendorOtpRequestSchema.safeParse(options.payload ?? {});
+      if (!parsed.success) {
+        return reply(400, {
+          error: 'VALIDATION_FAILED',
+          detail: parsed.error.issues.map((i) => `${i.path.join('.') || 'field'}: ${i.message}`).join('; '),
+          issues: parsed.error.issues,
+        });
+      }
+      const otp = String(randomInt(100_000, 1_000_000));
+      const challengeId = randomUUID();
+      const challenge: VendorOtpChallenge = {
+        challengeId,
+        vendorName: parsed.data.vendorName,
+        whatsappNumber: parsed.data.whatsappNumber,
+        ...(parsed.data.itemName ? { itemName: parsed.data.itemName } : {}),
+        ...(parsed.data.unitPriceMinor ? { unitPriceMinor: parsed.data.unitPriceMinor } : {}),
+        otp,
+        expiresAtMs: Date.now() + 5 * 60_000,
+        attempts: 0,
+        used: false,
+      };
+      vendorOtpChallenges.set(challengeId, challenge);
+      return reply(200, {
+        challengeId,
+        vendorName: challenge.vendorName,
+        whatsappNumber: challenge.whatsappNumber,
+        expiresInSeconds: 300,
+        deliveryChannel: 'whatsapp_sandbox_free',
+        sandboxOtpPreview: otp,
+        whatsappMessagePreview: `PayGuard Vendor KYC (${challenge.whatsappNumber}): Your 6-digit verification code for "${challenge.vendorName}" is ${otp}.`,
+      });
+    }
+
+    if (options.method === 'POST' && options.url === '/v1/vendors/verify-otp') {
+      const verifyRoleBlocked = requireMoneyRole();
+      if (verifyRoleBlocked) {
+        return verifyRoleBlocked;
+      }
+      const parsed = VendorOtpVerifySchema.safeParse(options.payload ?? {});
+      if (!parsed.success) {
+        return reply(400, {
+          error: 'VALIDATION_FAILED',
+          detail: parsed.error.issues.map((i) => i.message).join('; '),
+        });
+      }
+      const challenge = vendorOtpChallenges.get(parsed.data.challengeId);
+      if (!challenge) {
+        return reply(404, { error: 'OTP_CHALLENGE_NOT_FOUND' });
+      }
+      if (challenge.used) {
+        return reply(409, { error: 'OTP_ALREADY_USED' });
+      }
+      if (Date.now() >= challenge.expiresAtMs) {
+        vendorOtpChallenges.delete(challenge.challengeId);
+        return reply(410, { error: 'OTP_EXPIRED' });
+      }
+      if (challenge.otp !== parsed.data.otp) {
+        challenge.attempts += 1;
+        if (challenge.attempts >= 3) {
+          vendorOtpChallenges.delete(challenge.challengeId);
+        }
+        return reply(401, { error: 'INVALID_OTP', detail: 'Incorrect 6-digit OTP code.' });
+      }
+
+      challenge.used = true;
+      if (!defaultTrustedVendors.includes(challenge.vendorName)) {
+        defaultTrustedVendors.push(challenge.vendorName);
+      }
+      const slug = challenge.vendorName.toUpperCase().replace(/[^A-Z0-9]+/g, '').slice(0, 8) || 'VENDOR';
+      const payoutAccount = defaultTrustedVendorAccounts[challenge.vendorName] ?? `ACCT-${slug}-01`;
+      defaultTrustedVendorAccounts[challenge.vendorName] = payoutAccount;
+      vendorPhones.set(challenge.vendorName, challenge.whatsappNumber);
+
+      if (durability?.saveTrustedVendor) {
+        void durability
+          .saveTrustedVendor({
+            vendorName: challenge.vendorName,
+            whatsappPhone: challenge.whatsappNumber,
+            payoutAccount,
+          })
+          .catch(() => {});
+      }
+
+      let createdCatalogItem: { sku: string; name: string; unitPriceMinor: number; vendorName: string } | undefined;
+      if (challenge.itemName && challenge.unitPriceMinor) {
+        const sku = `SKU-${slug.slice(0, 5)}-${randomInt(10, 99)}`;
+        const item = {
+          sku,
+          name: challenge.itemName,
+          description: `${challenge.vendorName} — ${challenge.itemName}`,
+          unitPriceMinor: challenge.unitPriceMinor,
+          vendorName: challenge.vendorName,
+        };
+        catalog.upsert(item);
+        createdCatalogItem = { sku, name: item.name, unitPriceMinor: item.unitPriceMinor, vendorName: item.vendorName };
+        if (durability?.saveCustomCatalogItem) {
+          void durability.saveCustomCatalogItem(item).catch(() => {});
+        }
+      }
+
+      pushAudit({
+        id: `evt-${randomUUID().slice(0, 8)}`,
+        timestamp: new Date().toISOString(),
+        ...(authedOwnerId ? { ownerId: authedOwnerId } : {}),
+        action: 'EVALUATE',
+        actor: authedOwnerId ?? 'finance-admin',
+        invoiceId: 'VENDOR-KYC',
+        vendor: challenge.vendorName,
+        amountMinor: 0,
+        decisionState: 'APPROVED',
+        reasonCode: 'VENDOR_OTP_VERIFIED',
+        detail: `Verified vendor "${challenge.vendorName}" via WhatsApp OTP (${challenge.whatsappNumber}) and added to trusted allowlist.`,
+      });
+
+      return reply(200, {
+        success: true,
+        vendor: {
+          name: challenge.vendorName,
+          trusted: true,
+          whatsappNumber: challenge.whatsappNumber,
+          payoutAccount,
+        },
+        ...(createdCatalogItem ? { catalogItem: createdCatalogItem } : {}),
+      });
+    }
+
     if (options.method === 'GET' && options.url === '/v1/vendors') {
       const trustedSet = new Set(defaultTrustedVendors);
       if (ledger instanceof PostgresLedger) {
@@ -1943,6 +2122,30 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
           }
         } catch {
           console.error('Audit history hydration from durable store failed; starting with empty audit history.');
+        }
+        if (durability.loadTrustedVendors) {
+          try {
+            const verifiedVendors = await durability.loadTrustedVendors();
+            for (const v of verifiedVendors) {
+              if (!defaultTrustedVendors.includes(v.vendorName)) {
+                defaultTrustedVendors.push(v.vendorName);
+              }
+              defaultTrustedVendorAccounts[v.vendorName] = v.payoutAccount;
+              vendorPhones.set(v.vendorName, v.whatsappPhone);
+            }
+          } catch {
+            console.error('Trusted vendor hydration failed; starting with default allowlist.');
+          }
+        }
+        if (durability.loadCustomCatalogItems) {
+          try {
+            const customItems = await durability.loadCustomCatalogItems();
+            for (const item of customItems) {
+              catalog.upsert(item);
+            }
+          } catch {
+            console.error('Custom catalog hydration failed; starting with default catalog.');
+          }
         }
       }
       if (ledger instanceof PostgresLedger) {

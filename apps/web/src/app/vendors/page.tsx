@@ -1,8 +1,9 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { ShieldCheck, ShieldAlert } from 'lucide-react';
 import { AppShell } from '../../components/AppShell';
+import { VendorOnboardingCard } from '../../components/VendorOnboardingCard';
 
 const API_URL = '/api/payguard';
 
@@ -17,18 +18,29 @@ export default function VendorsPage() {
   const [vendors, setVendors] = useState<VendorRow[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetch(`${API_URL}/v1/vendors`)
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
-      .then((data: { vendors?: VendorRow[] }) => setVendors(data.vendors ?? []))
-      .catch(() => setError('Live API unreachable — trusted vendors could not be loaded.'));
+  const loadVendors = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/v1/vendors`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { vendors?: VendorRow[] };
+      setVendors(data.vendors ?? []);
+      setError(null);
+    } catch {
+      setError('Live API unreachable — trusted vendors could not be loaded.');
+    }
   }, []);
+
+  useEffect(() => {
+    void loadVendors();
+  }, [loadVendors]);
 
   return (
     <AppShell
       title="Vendors"
-      subtitle="Owner-controlled trusted vendor allowlist enforced by the deterministic policy gate."
+      subtitle="Owner-controlled trusted vendor allowlist — onboard new vendors via Zod validation and free WhatsApp Sandbox OTP."
     >
+      <VendorOnboardingCard onVendorVerified={() => void loadVendors()} />
+
       {error && (
         <div className="mb-4 p-3 rounded-lg bg-[rgba(255,123,130,0.12)] border border-[rgba(255,123,130,0.3)] text-xs text-[#ff959a]">
           {error}
@@ -72,4 +84,3 @@ export default function VendorsPage() {
     </AppShell>
   );
 }
-

@@ -547,6 +547,80 @@ describe('PayGuard HTTP Server Boundary (server.ts)', () => {
     expect(await server.ledger.getBalance(ownerId)).toBe(500_000);
   });
 
+  it('onboards an unknown vendor + catalog item via Zod-validated 6-digit WhatsApp sandbox OTP so subsequent <=$100 orders auto-approve', async () => {
+    // 1. Zod rejects numbers-only vendor name and invalid phone numbers
+    const badVendor = await server.inject<{ error: string }>({
+      method: 'POST',
+      url: '/v1/vendors/request-otp',
+      payload: { vendorName: '123456', whatsappNumber: '+919876543210' },
+    });
+    expect(badVendor.statusCode).toBe(400);
+
+    const badPhone = await server.inject<{ error: string }>({
+      method: 'POST',
+      url: '/v1/vendors/request-otp',
+      payload: { vendorName: 'Shubham Cloud Services', whatsappNumber: 'abc' },
+    });
+    expect(badPhone.statusCode).toBe(400);
+
+    // 2. Valid vendor OTP request returns challengeId + sandboxOtpPreview
+    const otpReq = await server.inject<{
+      challengeId: string;
+      sandboxOtpPreview: string;
+      expiresInSeconds: number;
+    }>({
+      method: 'POST',
+      url: '/v1/vendors/request-otp',
+      payload: {
+        vendorName: 'Shubham Cloud Services',
+        whatsappNumber: '+919876543210',
+        itemName: 'Cloud API Credits',
+        unitPriceMinor: 4500,
+      },
+    });
+    expect(otpReq.statusCode).toBe(200);
+    expect(otpReq.json().sandboxOtpPreview).toMatch(/^\d{6}$/);
+
+    // 3. Wrong OTP fails with 401
+    const wrongVerify = await server.inject({
+      method: 'POST',
+      url: '/v1/vendors/verify-otp',
+      payload: { challengeId: otpReq.json().challengeId, otp: '000000' === otpReq.json().sandboxOtpPreview ? '111111' : '000000' },
+    });
+    expect(wrongVerify.statusCode).toBe(401);
+
+    // 4. Correct OTP adds vendor to trusted allowlist + catalog item
+    const okVerify = await server.inject<{
+      success: boolean;
+      vendor: { name: string; trusted: boolean };
+      catalogItem?: { sku: string; unitPriceMinor: number };
+    }>({
+      method: 'POST',
+      url: '/v1/vendors/verify-otp',
+      payload: { challengeId: otpReq.json().challengeId, otp: otpReq.json().sandboxOtpPreview },
+    });
+    expect(okVerify.statusCode).toBe(200);
+    expect(okVerify.json().success).toBe(true);
+    expect(okVerify.json().vendor.trusted).toBe(true);
+    expect(okVerify.json().catalogItem?.unitPriceMinor).toBe(4500);
+
+    // 5. Evaluating a $45.00 order for the newly verified vendor now AUTO-APPROVES instead of HOLD_VENDOR_UNTRUSTED
+    const evalAfter = await server.inject<{ decision: { state: string; reasonCode: string } }>({
+      method: 'POST',
+      url: '/v1/evaluate',
+      payload: {
+        ownerId,
+        proposal: {
+          ...validProposalUnderCap,
+          invoiceId: 'INV-NEW-VENDOR-1',
+          vendorName: 'Shubham Cloud Services',
+        },
+      },
+    });
+    expect(evalAfter.json().decision.state).toBe('APPROVED');
+    expect(evalAfter.json().decision.reasonCode).toBe(ReasonCode.OK_AUTO);
+  });
+
   it('GET /readyz returns 200 when ready and 503 when readinessCheck fails', async () => {
     const readyServer = buildServer(500_000, { readinessCheck: async () => true });
     const downServer = buildServer(500_000, { readinessCheck: async () => false });

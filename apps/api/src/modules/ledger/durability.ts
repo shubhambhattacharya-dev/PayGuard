@@ -48,6 +48,30 @@ export interface DurableStore {
     readonly action: RailAction;
   }): Promise<{ updated: number }>;
   getRailStateReport(): Promise<RailStateReport>;
+  saveTrustedVendor?(input: {
+    readonly vendorName: string;
+    readonly whatsappPhone: string;
+    readonly payoutAccount: string;
+  }): Promise<void>;
+  loadTrustedVendors?(): Promise<{
+    readonly vendorName: string;
+    readonly whatsappPhone: string;
+    readonly payoutAccount: string;
+  }[]>;
+  saveCustomCatalogItem?(item: {
+    readonly sku: string;
+    readonly name: string;
+    readonly vendorName: string;
+    readonly description: string;
+    readonly unitPriceMinor: number;
+  }): Promise<void>;
+  loadCustomCatalogItems?(): Promise<{
+    readonly sku: string;
+    readonly name: string;
+    readonly vendorName: string;
+    readonly description: string;
+    readonly unitPriceMinor: number;
+  }[]>;
 }
 
 interface QrApprovalRow {
@@ -258,5 +282,75 @@ export class PostgresDurabilityStore implements DurableStore {
         receivedAt: row.received_at instanceof Date ? row.received_at.toISOString() : String(row.received_at),
       })),
     };
+  }
+
+  public async saveTrustedVendor(input: {
+    readonly vendorName: string;
+    readonly whatsappPhone: string;
+    readonly payoutAccount: string;
+  }): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO trusted_vendors (vendor_name, whatsapp_phone, payout_account)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (vendor_name) DO UPDATE
+       SET whatsapp_phone = EXCLUDED.whatsapp_phone, payout_account = EXCLUDED.payout_account, verified_at = NOW()`,
+      [input.vendorName, input.whatsappPhone, input.payoutAccount],
+    );
+  }
+
+  public async loadTrustedVendors(): Promise<{
+    readonly vendorName: string;
+    readonly whatsappPhone: string;
+    readonly payoutAccount: string;
+  }[]> {
+    const res = await this.pool.query<{
+      vendor_name: string;
+      whatsapp_phone: string;
+      payout_account: string;
+    }>(`SELECT vendor_name, whatsapp_phone, payout_account FROM trusted_vendors ORDER BY verified_at DESC`);
+    return res.rows.map((r) => ({
+      vendorName: r.vendor_name,
+      whatsappPhone: r.whatsapp_phone,
+      payoutAccount: r.payout_account,
+    }));
+  }
+
+  public async saveCustomCatalogItem(item: {
+    readonly sku: string;
+    readonly name: string;
+    readonly vendorName: string;
+    readonly description: string;
+    readonly unitPriceMinor: number;
+  }): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO custom_catalog_items (sku, name, vendor_name, description, unit_price_minor)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (sku) DO UPDATE
+       SET name = EXCLUDED.name, vendor_name = EXCLUDED.vendor_name, description = EXCLUDED.description, unit_price_minor = EXCLUDED.unit_price_minor`,
+      [item.sku, item.name, item.vendorName, item.description, item.unitPriceMinor],
+    );
+  }
+
+  public async loadCustomCatalogItems(): Promise<{
+    readonly sku: string;
+    readonly name: string;
+    readonly vendorName: string;
+    readonly description: string;
+    readonly unitPriceMinor: number;
+  }[]> {
+    const res = await this.pool.query<{
+      sku: string;
+      name: string;
+      vendor_name: string;
+      description: string;
+      unit_price_minor: string;
+    }>(`SELECT sku, name, vendor_name, description, unit_price_minor FROM custom_catalog_items ORDER BY created_at DESC`);
+    return res.rows.map((r) => ({
+      sku: r.sku,
+      name: r.name,
+      vendorName: r.vendor_name,
+      description: r.description,
+      unitPriceMinor: Number(r.unit_price_minor),
+    }));
   }
 }
