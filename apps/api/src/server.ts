@@ -105,6 +105,7 @@ export interface AuditEvent {
   readonly decisionState: string;
   readonly reasonCode: string;
   readonly detail: string;
+  readonly injectionText?: string;
 }
 
 export interface LedgerTransactionRecord {
@@ -123,14 +124,12 @@ export interface LedgerTransactionRecord {
 }
 
 const PROMPT_INJECTION_PATTERNS = [
-  /ignore\s+(all\s+)?previous\s+instructions/i,
-  /forget\s+(all\s+)?(previous\s+)?instructions/i,
-  /disregard\s+(all\s+)?(policy|limits|instructions)/i,
-  /bypass\s+(all\s+)?(policy|approval|gate|limits)/i,
-  /override\s+(all\s+)?(policy|limits)/i,
-  /system\s+override/i,
+  /(?:ignore|disregard|forget|bypass|override|skip)\s+(?:all\s+|any\s+|your\s+|the\s+)?(?:previous\s+|prior\s+|above\s+|system\s+|safety\s+|security\s+|policy\s+)?(?:instructions?|rules?|polic(?:y|ies)|limits?|caps?|gates?|approvals?|checks?|guards?|constraints?|restrictions?)/i,
+  /without\s+(?:human\s+|admin\s+|manager\s+|qr\s+)?(?:approval|review|verification)/i,
+  /do\s+not\s+(?:require|wait\s+for|ask\s+for)\s+(?:human\s+|qr\s+)?approval/i,
+  /system\s+(?:override|prompt)/i,
   /pre-approved\s+for\s+\$/i,
-  /auto-approval\s+limit\s+raised/i,
+  /auto-approval\s+(?:limit|cap)\s+(?:raised|increased)/i,
   /(BEGIN|END)_VENDOR_DOCUMENT/i,
 ];
 
@@ -197,6 +196,8 @@ export interface AgentRunRequestPayload {
   readonly goal?: string;
   readonly idempotencyKey?: string;
   readonly model?: 'auto' | 'fixture';
+  /** View-only sandbox preview: runs injection scan + agent + gate without settling or persisting QR state. */
+  readonly proposeOnly?: boolean;
 }
 
 export interface PayGuardServer {
@@ -607,6 +608,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
             decisionState: 'REJECTED',
             reasonCode: ReasonCode.REJECT_PROMPT_INJECTION,
             detail: `Blocked prompt injection ("${injectionMatch}") on ${proposal.invoiceId} (${proposal.vendorName}).`,
+            injectionText: body.invoiceText.slice(0, 300),
           });
           return reply(200, {
             decision: {
@@ -1121,18 +1123,21 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       // 6a. Untrusted prompt-injection scan FIRST - injected text (invoice or goal) never reaches policy.
       const injectionMatch = detectPromptInjection(invoiceText) ?? detectPromptInjection(goal);
       if (injectionMatch) {
+        const extractedInv = /\bINV-[A-Z0-9-]+\b/i.exec(invoiceText)?.[0] ?? 'UNTRUSTED-INPUT';
+        const extractedVendor = /Vendor:\s*([^|\n]+)/i.exec(invoiceText)?.[1]?.trim().slice(0, 80) || 'Untrusted invoice';
         pushAudit({
           id: `evt-${randomUUID().slice(0, 8)}`,
           timestamp: new Date().toISOString(),
           ownerId,
           action: 'AGENT_RUN',
           actor: ownerId,
-          invoiceId: 'UNTRUSTED-INPUT',
-          vendor: 'Unknown vendor',
+          invoiceId: extractedInv,
+          vendor: extractedVendor,
           amountMinor: 0,
           decisionState: 'REJECTED',
           reasonCode: ReasonCode.REJECT_PROMPT_INJECTION,
           detail: `Blocked prompt injection ("${injectionMatch}") before agent execution.`,
+          injectionText: invoiceText.slice(0, 300),
         });
         return reply(200, {
           decision: {
@@ -1243,7 +1248,21 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         detail: `Agent (${provider}, ${run.roundsUsed} rounds) proposed ${run.proposal.invoiceId} -> ${decision.state}.`,
       });
 
+      const isViewOnlyPreview = body.proposeOnly === true;
+      const isProposerRoleOnly = authedRole !== null && !MONEY_MOVING_ROLES.includes(authedRole);
+
       if (decision.state === 'HOLD') {
+        if (isViewOnlyPreview) {
+          return reply(200, {
+            decision,
+            thoughts,
+            proposal: run.proposal,
+            model: provider,
+            roundsUsed: run.roundsUsed,
+            proposeOnly: true,
+            settled: false,
+          });
+        }
         const qrCode = newQrCode();
         const qrRecord: QrApprovalRecord = {
           code: qrCode,
@@ -1285,8 +1304,20 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         });
       }
 
-      // APPROVED: minted token is stored, ledger settles, rail executes.
+      // APPROVED: store minted token; only approver/admin (and non-preview requests) may settle money.
       capabilityVault.set(decision.approvedToken.approvalId, decision.approvedToken);
+      if (isViewOnlyPreview || isProposerRoleOnly) {
+        return reply(200, {
+          decision: toPublicPolicyDecision(decision),
+          approvalId: decision.approvedToken.approvalId,
+          thoughts,
+          proposal: run.proposal,
+          model: provider,
+          roundsUsed: run.roundsUsed,
+          ...(isViewOnlyPreview ? { proposeOnly: true } : {}),
+          settled: false,
+        });
+      }
       const settlement: SettlementResult = await ledger.settleOrder({
         ownerId,
         proposal: run.proposal,
@@ -1348,6 +1379,54 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
     // 7. Ledger Transactions & Live Approve/Reject Routes (for UI Dashboard).
     // Durable mode: real settlements read from PostgreSQL. Demo mode: seed list.
     if (options.method === 'GET' && options.url === '/v1/transactions') {
+      const blockedAuditRows = auditEvents
+        .filter(
+          (e) =>
+            e.decisionState === 'REJECTED' &&
+            (authedOwnerId === null || !e.ownerId || e.ownerId === authedOwnerId),
+        )
+        .slice(0, 25)
+        .map((e) => ({
+          id: `blocked:${e.id}`,
+          vendor: e.vendor,
+          invoiceNumber: e.invoiceId,
+          amountFormatted: `$${(e.amountMinor / 100).toFixed(2)}`,
+          amountMinor: e.amountMinor,
+          status: 'Blocked' as const,
+          policyCode: e.reasonCode,
+          dateFormatted: new Date(e.timestamp).toLocaleDateString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+          }),
+          canApproveReject: false,
+          policyChecks:
+            e.reasonCode === ReasonCode.REJECT_PROMPT_INJECTION
+              ? [
+                  {
+                    title: 'Untrusted prompt-injection scan',
+                    description: e.detail,
+                    status: 'failed' as const,
+                  },
+                ]
+              : [
+                  {
+                    title: 'Deterministic policy gate',
+                    description: e.detail,
+                    status: 'failed' as const,
+                  },
+                ],
+          ...(e.injectionText
+            ? {
+                untrustedInjection: {
+                  text: e.injectionText,
+                  warning: 'Blocked before model execution — untrusted text cannot reach policy.',
+                },
+              }
+            : {}),
+          proposal: null,
+        }));
+
       if (ledger instanceof PostgresLedger) {
         const entries = await ledger.listEntries(authedOwnerId);
         const nowMs = Date.now();
@@ -1411,14 +1490,17 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
           proposal: null,
         }));
         return reply(200, {
-          transactions: [...pendingApprovals, ...settledRows],
+          transactions: [...pendingApprovals, ...blockedAuditRows, ...settledRows],
           executionMode: serverOptions.paypalExecutor ? 'paypal_sandbox' : 'in_memory_simulated',
           paypalSandboxReady: Boolean(serverOptions.paypalExecutor),
           source: 'postgres',
         });
       }
+      const inMemoryBlocked = blockedAuditRows.filter(
+        (b) => !transactions.some((t) => t.invoiceNumber === b.invoiceNumber && t.status === 'Blocked'),
+      );
       return reply(200, {
-        transactions,
+        transactions: [...inMemoryBlocked, ...transactions],
         executionMode: serverOptions.paypalExecutor ? 'paypal_sandbox' : 'in_memory_simulated',
         paypalSandboxReady: Boolean(serverOptions.paypalExecutor),
         source: 'in_memory_demo',

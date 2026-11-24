@@ -232,7 +232,14 @@ export function dispatchToolCall(call: ParsedToolCall | null, catalog: CatalogSt
       }
       for (const line of parsed.data.lines) {
         const catalogItem = catalog.getBySku(line.sku);
-        if (catalogItem && line.unitPriceMinor !== catalogItem.unitPriceMinor) {
+        if (!catalogItem) {
+          return observationError(
+            'draft_order',
+            'REJECT_UNCATALOGUED_SKU: SKU is not in owner catalog',
+            `SKU ${line.sku} does not exist in the approved catalog. Call search_catalog first and use an exact catalog SKU.`,
+          );
+        }
+        if (line.unitPriceMinor !== catalogItem.unitPriceMinor) {
           return observationError(
             'draft_order',
             'REJECT_PRICE_MISMATCH: Unit price does not match owner catalog',

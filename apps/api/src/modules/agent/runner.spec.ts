@@ -204,6 +204,25 @@ describe('ReAct loop with hard cap (runner.ts)', () => {
     expect(obs.summary).toContain('REJECT_PRICE_MISMATCH');
   });
 
+  it('draft_order rejects hallucinated/uncatalogued SKUs with REJECT_UNCATALOGUED_SKU', () => {
+    const catalog = createCatalog();
+    const obs = dispatchToolCall(
+      {
+        tool: 'draft_order',
+        args: {
+          invoiceId: 'INV-HALLUCINATED-SKU',
+          vendorName: 'Cedar Supply',
+          currency: 'USD',
+          lines: [{ sku: 'FAKE-SKU-999', description: 'Invented Item', quantity: 1, unitPriceMinor: 5000, taxBps: 0 }],
+        },
+      },
+      catalog,
+    );
+    expect(obs.ok).toBe(false);
+    expect(obs.terminal).toBe(false);
+    expect(obs.summary).toContain('REJECT_UNCATALOGUED_SKU');
+  });
+
   it('recovers valid tool JSON from Groq 400 tool_use_failed (Harmony failed_generation)', async () => {
     const fetchMock: typeof fetch = async () =>
       new Response(

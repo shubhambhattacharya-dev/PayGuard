@@ -33,7 +33,7 @@ export default function PaymentsPage() {
   const refreshTransactions = useCallback(async () => {
     try {
       const res = await fetch(`${API_URL}/v1/transactions`, {
-        signal: AbortSignal.timeout(2500),
+        signal: AbortSignal.timeout(15000),
       });
       if (!res.ok) throw new Error(`Transactions request failed (${res.status})`);
       const data = (await res.json()) as { transactions?: unknown; source?: unknown } | null;
@@ -44,11 +44,15 @@ export default function PaymentsPage() {
       setExpandedTxIds((current) => new Set([...current].filter((id) => rows.some((row) => row.id === id))));
       setLoadError(null);
     } catch {
-      setTransactions([]);
-      setSelectedTxId('');
-      setExpandedTxIds(new Set());
-      setLedgerSource(null);
-      setLoadError('Live API unavailable — no ledger data is shown. Demo transactions are disabled in the workspace.');
+      setTransactions((prev) => {
+        if (prev.length === 0) {
+          setSelectedTxId('');
+          setExpandedTxIds(new Set());
+          setLedgerSource(null);
+          setLoadError('Live API unavailable — no ledger data is shown. Demo transactions are disabled in the workspace.');
+        }
+        return prev;
+      });
     } finally {
       setIsLoading(false);
     }
@@ -98,7 +102,7 @@ export default function PaymentsPage() {
         if (!res.ok || !data.success) {
           setActionError(
             data.error === 'LOGIN_REQUIRED'
-              ? 'View-only demo — sign in at /login to approve payments.'
+              ? 'View-only mode — click "View-Only · Unlock Approver" in the top bar (or sign in at /login) to approve payments.'
               : (data.toastMessage ?? data.error ?? `Approve failed (HTTP ${res.status})`),
           );
           return;
@@ -121,7 +125,7 @@ export default function PaymentsPage() {
       if (!res.ok || !data.success) {
         setActionError(
           data.error === 'LOGIN_REQUIRED'
-            ? 'View-only demo — sign in at /login to approve payments.'
+            ? 'View-only mode — click "View-Only · Unlock Approver" in the top bar (or sign in at /login) to reject payments.'
             : (data.error ?? `Reject failed (HTTP ${res.status})`),
         );
         return;

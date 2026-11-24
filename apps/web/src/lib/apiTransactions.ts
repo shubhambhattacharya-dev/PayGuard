@@ -19,6 +19,7 @@ export interface ApiTransactionRow {
   qrExpiresAtMs?: unknown;
   hourlySpentMinor?: unknown;
   policyChecks?: unknown;
+  untrustedInjection?: unknown;
 }
 
 const VALID_STATUSES: ReadonlySet<TransactionStatus> = new Set<TransactionStatus>([
@@ -114,6 +115,14 @@ export function mapApiTransactionRow(row: ApiTransactionRow): Transaction | null
     typeof row.hourlySpentMinor === 'number' &&
     Number.isSafeInteger(row.hourlySpentMinor) &&
     row.hourlySpentMinor >= 0;
+  const rawInj = row.untrustedInjection as { text?: unknown; warning?: unknown } | undefined;
+  const parsedInjection =
+    typeof rawInj === 'object' &&
+    rawInj !== null &&
+    isNonEmptyString(rawInj.text) &&
+    isNonEmptyString(rawInj.warning)
+      ? { text: rawInj.text, warning: rawInj.warning }
+      : undefined;
   return {
     id: row.id,
     vendor: isNonEmptyString(row.vendor) ? row.vendor : 'Unknown vendor',
@@ -128,6 +137,7 @@ export function mapApiTransactionRow(row: ApiTransactionRow): Transaction | null
     canApproveReject: row.canApproveReject,
     reasoningSteps: [],
     policyChecks: parsedPolicyChecks,
+    ...(parsedInjection ? { untrustedInjection: parsedInjection } : {}),
     policyLimits: {
       ...KNOWN_POLICY_LIMITS,
       ...(hasVelocity ? { vendorVelocitySpent: formatMinorUsd(row.hourlySpentMinor as number) } : {}),

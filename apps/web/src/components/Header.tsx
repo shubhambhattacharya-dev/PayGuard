@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import { CheckCircle2, Moon, PanelLeftOpen, PanelRightClose, PanelRightOpen, Sun, X } from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { CheckCircle2, Lock, Moon, PanelLeftOpen, PanelRightClose, PanelRightOpen, Sun, Unlock, X } from 'lucide-react';
 
 const API_URL = '/api/payguard';
 
@@ -26,6 +26,9 @@ export function Header({
   const [latencyMs, setLatencyMs] = useState<number | null>(null);
   const [todayLabel, setTodayLabel] = useState<string>('');
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [approverUnlocked, setApproverUnlocked] = useState<boolean>(false);
+  const [demoAllowed, setDemoAllowed] = useState<boolean>(true);
+  const [authBusy, setAuthBusy] = useState<boolean>(false);
 
   useEffect(() => {
     setTodayLabel(
@@ -44,6 +47,49 @@ export function Header({
       // ignore storage errors
     }
   }, []);
+
+  const refreshSession = useCallback(async () => {
+    try {
+      const res = await fetch('/api/session');
+      if (!res.ok) return;
+      const data = (await res.json()) as { authenticated?: boolean; demoAllowed?: boolean };
+      setApproverUnlocked(Boolean(data.authenticated));
+      if (typeof data.demoAllowed === 'boolean') {
+        setDemoAllowed(data.demoAllowed);
+      }
+    } catch {
+      // ignore network errors
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshSession();
+  }, [refreshSession]);
+
+  const toggleApproverSession = async () => {
+    setAuthBusy(true);
+    try {
+      if (approverUnlocked) {
+        await fetch('/api/logout', { method: 'POST' });
+        setApproverUnlocked(false);
+      } else if (demoAllowed) {
+        const res = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ demo: true }),
+        });
+        if (res.ok) {
+          setApproverUnlocked(true);
+        } else {
+          window.location.href = '/login';
+        }
+      } else {
+        window.location.href = '/login';
+      }
+    } finally {
+      setAuthBusy(false);
+    }
+  };
 
   const toggleTheme = () => {
     const next = theme === 'dark' ? 'light' : 'dark';
@@ -127,8 +173,8 @@ export function Header({
         </div>
       </div>
 
-      {/* Right: Toast + Theme Toggle + Inspector Drawer Toggle */}
-      <div className="flex items-center gap-2">
+      {/* Right: Toast + Role Switcher + Theme Toggle + Inspector Drawer Toggle */}
+      <div className="flex items-center gap-2 flex-wrap">
         {toastMessage && (
           <div className="flex items-center gap-2 bg-[rgba(40,187,131,0.14)] backdrop-blur-md border border-[rgba(40,187,131,0.3)] text-[#84e5b3] text-xs px-3 py-1.5 rounded-lg shadow-sm">
             <CheckCircle2 className="w-4 h-4 text-[#84e5b3] shrink-0" />
@@ -144,6 +190,34 @@ export function Header({
             )}
           </div>
         )}
+
+        <button
+          type="button"
+          onClick={() => void toggleApproverSession()}
+          disabled={authBusy}
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${
+            approverUnlocked
+              ? 'border-[rgba(40,187,131,0.35)] bg-[rgba(40,187,131,0.14)] text-[#84e5b3] hover:bg-[rgba(40,187,131,0.22)]'
+              : 'border-[rgba(200,241,105,0.4)] bg-[#c8f169] text-[#10170d] hover:bg-[#d6f68d]'
+          }`}
+          title={
+            approverUnlocked
+              ? 'Approver session active — click to switch back to View-Only mode'
+              : 'View-only mode — click to unlock 1-click Sandbox Approver session'
+          }
+        >
+          {approverUnlocked ? (
+            <>
+              <Unlock className="w-3.5 h-3.5 shrink-0" />
+              <span>Approver Active · Lock</span>
+            </>
+          ) : (
+            <>
+              <Lock className="w-3.5 h-3.5 shrink-0" />
+              <span>{authBusy ? 'Unlocking…' : 'View-Only · Unlock Approver'}</span>
+            </>
+          )}
+        </button>
 
         <button
           type="button"

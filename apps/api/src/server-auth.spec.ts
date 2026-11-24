@@ -189,6 +189,29 @@ describe('Maker-checker roles', () => {
       expect(res.statusCode, `${attempt.url} must 403 for proposer`).toBe(403);
       expect(res.json<{ error: string }>().error).toBe('FORBIDDEN_ROLE');
     }
+
+    // Maker-checker on /v1/agent/run: proposer can draft via the agent and receive an approvalId,
+    // but must NEVER auto-settle money in the ledger.
+    const agentDraft = await server.inject<{
+      decision: { state: string };
+      approvalId?: string;
+      settled?: boolean;
+      settlement?: unknown;
+    }>({
+      method: 'POST',
+      url: '/v1/agent/run',
+      headers: { authorization: 'Bearer pgk_prop' },
+      payload: {
+        model: 'fixture',
+        invoiceText: 'Vendor: Cedar Supply | Invoice INV-ROLE-AGENT | Office Paper Reams x4 @ $16.00 | Total $64.00',
+      },
+    });
+    expect(agentDraft.statusCode).toBe(200);
+    expect(agentDraft.json().decision.state).toBe('APPROVED');
+    expect(agentDraft.json().approvalId).toBeDefined();
+    expect(agentDraft.json().settled).toBe(false);
+    expect(agentDraft.json().settlement).toBeUndefined();
+    expect(await server.ledger.getBalance('owner_northstar')).toBe(500_000);
   });
 
   it('approver passes the role gate (404 on unknown tx, not 403) and can draft too', async () => {

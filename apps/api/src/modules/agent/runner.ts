@@ -360,17 +360,27 @@ const FIXTURE_SCRIPT: readonly string[] = [
   '{"tool":"draft_order","args":{"invoiceId":"INV-3155","vendorName":"Cedar Supply","currency":"USD","lines":[{"sku":"CED-PPR-01","description":"Office Paper Reams","quantity":4,"unitPriceMinor":1600,"taxBps":0}]}}',
 ];
 
+const CHAIR_FIXTURE_SCRIPT: readonly string[] = [
+  '{"tool":"search_catalog","args":{"query":"chair"}}',
+  '{"tool":"calculate_total","args":{"items":[{"sku":"LM-CHR-02","quantity":1,"unitPriceMinor":32500}]}}',
+  '{"tool":"draft_order","args":{"invoiceId":"INV-3155","vendorName":"Lumen Office","currency":"USD","lines":[{"sku":"LM-CHR-02","description":"Ergonomic Office Chair","quantity":1,"unitPriceMinor":32500,"taxBps":0}]}}',
+];
+
 export function createFixtureChatFn(script: readonly string[] = FIXTURE_SCRIPT): AgentChatFn {
   const isDefaultScript = script === FIXTURE_SCRIPT;
   return async (messages) => {
+    const userContent = messages.find((m) => m.role === 'user')?.content ?? '';
+    const activeScript =
+      isDefaultScript && (userContent.includes('Lumen Office') || userContent.includes('LM-CHR-02'))
+        ? CHAIR_FIXTURE_SCRIPT
+        : script;
     // The last non-observation position determines the next scripted step.
     const roundIndex = messages.filter((message) => message.role === 'assistant').length;
-    const line = script[roundIndex];
+    const line = activeScript[roundIndex];
     if (line === undefined) {
       throw new Error('FIXTURE_SCRIPT_EXHAUSTED');
     }
     if (isDefaultScript && line.includes('"INV-3155"')) {
-      const userContent = messages.find((m) => m.role === 'user')?.content ?? '';
       const invMatch = /\bINV-[A-Z0-9-]+\b/.exec(userContent);
       if (invMatch?.[0]) {
         return line.replace('"INV-3155"', JSON.stringify(invMatch[0]));

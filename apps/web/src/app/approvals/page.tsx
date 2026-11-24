@@ -59,7 +59,7 @@ function ApprovalsContent() {
       if (!res.ok || !data.success) {
         setError(
           data.error === 'LOGIN_REQUIRED'
-            ? 'View-only demo — sign in at /login to approve payments.'
+            ? 'View-only mode — click "View-Only · Unlock Approver" in the top bar (or sign in at /login) to approve payments.'
             : (data.toastMessage ?? data.error ?? `HTTP ${res.status}`),
         );
         return;

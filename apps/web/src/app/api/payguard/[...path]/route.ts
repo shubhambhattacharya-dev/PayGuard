@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createHash } from 'node:crypto';
 import { request as httpRequest, type IncomingMessage } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 
@@ -10,14 +11,29 @@ import { request as httpsRequest } from 'node:https';
  * Uses raw node:https instead of global fetch: Next.js patches fetch in
  * route handlers, and the patched layer was observed dropping the
  * Authorization header on outbound calls (root cause of the 401 loop).
+ *
+ * View-only enforcement: when an unauthenticated visitor calls /v1/agent/run,
+ * this proxy forces `proposeOnly: true` so the agent + policy gate run live
+ * without debiting PostgreSQL or PayPal until the visitor unlocks Approver mode.
  */
 
 const TARGET_BASE = process.env.PAYGUARD_API_URL ?? 'http://localhost:4000';
 const API_KEY = process.env.PAYGUARD_API_KEY ?? '';
+const SESSION_COOKIE = 'pg_session';
+const DEFAULT_SANDBOX_SECRET = 'payguard-sandbox-reviewer-default-v1';
 
 // The proxy must execute on EVERY request — a cached route response would
 // freeze the first (possibly failed) upstream call forever.
 export const dynamic = 'force-dynamic';
+
+function hasValidApproverSession(request: NextRequest): boolean {
+  const demoAllowed = process.env.PAYGUARD_ALLOW_DEMO_LOGIN !== 'false';
+  const configured = (process.env.PAYGUARD_DASHBOARD_PASSWORD ?? '').trim();
+  const secret = configured.length > 0 ? configured : demoAllowed ? DEFAULT_SANDBOX_SECRET : '';
+  if (secret.length === 0) return false;
+  const expected = createHash('sha256').update(`${secret}:pg-session-v1`).digest('hex');
+  return request.cookies.get(SESSION_COOKIE)?.value === expected;
+}
 
 interface RouteContext {
   readonly params: Promise<{ readonly path: readonly string[] }>;
@@ -69,7 +85,8 @@ function rawRequest(
 }
 
 async function forward(request: NextRequest, pathSegments: readonly string[]): Promise<NextResponse> {
-  const target = `${TARGET_BASE}/${pathSegments.join('/')}`;
+  const joinedPath = pathSegments.join('/');
+  const target = `${TARGET_BASE}/${joinedPath}`;
   const headers: Record<string, string> = { accept: 'application/json' };
   if (API_KEY.length > 0) {
     headers.authorization = `Bearer ${API_KEY}`;
@@ -78,6 +95,14 @@ async function forward(request: NextRequest, pathSegments: readonly string[]): P
   let body: string | undefined;
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     body = await request.text();
+    if (request.method === 'POST' && joinedPath === 'v1/agent/run' && !hasValidApproverSession(request)) {
+      try {
+        const parsed = body.length > 0 ? (JSON.parse(body) as Record<string, unknown>) : {};
+        body = JSON.stringify({ ...parsed, proposeOnly: true });
+      } catch {
+        // leave malformed JSON for upstream 400 validation
+      }
+    }
     if (body.length > 0) {
       headers['content-type'] = 'application/json';
     }
