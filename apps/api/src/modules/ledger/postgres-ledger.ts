@@ -9,12 +9,6 @@ import { assertApprovedForExecution } from '@payguard/contracts';
 
 const HOURLY_VELOCITY_WINDOW = "INTERVAL '60 minutes'";
 
-/**
- * Durable PostgreSQL ledger adapter using row-level pessimistic locking
- * (`SELECT ... FOR UPDATE`), `UNIQUE(owner_id, idempotency_key)`,
- * a global duplicate-invoice guard, and an in-transaction velocity check
- * (closes the mint-time parallel-evaluate race at the money path).
- */
 export class PostgresLedger implements LedgerStore {
   public constructor(
     private readonly pool: Pool,
@@ -97,9 +91,6 @@ export class PostgresLedger implements LedgerStore {
         return { success: true, settlement: { amountMinor: Number(row.amount_minor), settlementId: row.settlement_id, ownerId: row.owner_id, invoiceId: row.invoice_id, remainingBalanceMinor: Number(row.remaining_balance_minor), settledAt: row.settled_at instanceof Date ? row.settled_at.toISOString() : String(row.settled_at), status: 'SETTLED' } }
       }
 
-      // Velocity cap enforced INSIDE the transaction against committed settlements,
-      // so parallel autonomous executes can never collectively breach the cap.
-      // Explicit human-in-the-loop QR/dashboard approvals set bypassVelocityCap.
       if (!input.bypassVelocityCap && this.hourlyVelocityCapMinor !== undefined) {
         const velocityRes = await client.query<{ total_minor: string | null }>(
           `SELECT COALESCE(SUM(amount_minor), 0) AS total_minor
@@ -114,8 +105,6 @@ export class PostgresLedger implements LedgerStore {
         }
       }
 
-      // Global duplicate-invoice guard: atomic insert; a prior settlement of the
-      // same invoiceId (any idempotency key) rejects here, never double-pays.
       const duplicateRes = await client.query<{ owner_id: string }>(
         `INSERT INTO settled_invoices (owner_id, invoice_id)
          VALUES ($1, $2)
@@ -147,17 +136,13 @@ export class PostgresLedger implements LedgerStore {
       try {
         await client.query('ROLLBACK')
       } catch {
-        // connection already aborted; nothing to roll back
       }
-      // Unexpected DB failure: rethrow (http boundary maps to 500). Never mask
-      // an outage as a policy verdict.
       throw error
     } finally {
       client.release()
     }
   }
 
-  /** Invoice ids already settled, used to rehydrate the gate's duplicate guard. */
   public async listSettledInvoiceIds(): Promise<string[]> {
     const res = await this.pool.query<{ invoice_id: string }>(
       `SELECT invoice_id FROM settled_invoices`,
@@ -165,7 +150,6 @@ export class PostgresLedger implements LedgerStore {
     return res.rows.map((row) => row.invoice_id);
   }
 
-  /** Owner-scoped settled invoice keys (`ownerId:invoiceId`) matching the composite PK. */
   public async listSettledInvoiceKeys(): Promise<string[]> {
     const res = await this.pool.query<{ owner_id: string; invoice_id: string }>(
       `SELECT owner_id, invoice_id FROM settled_invoices`,
@@ -173,7 +157,6 @@ export class PostgresLedger implements LedgerStore {
     return res.rows.map((row) => `${row.owner_id}:${row.invoice_id}`);
   }
 
-  /** Real settlements for the UI transactions list (newest first). */
   public async listEntries(ownerId: string | null, limit = 100): Promise<{
     settlementId: string; vendorName: string; invoiceId: string; amountMinor: number; remainingBalanceMinor: number; status: string; settledAt: string;
   }[]> {

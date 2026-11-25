@@ -13,8 +13,6 @@ const API_URL = '/api/payguard';
 type LiveState = 'loading' | 'live' | 'offline';
 
 export default function OverviewPage() {
-  // Never seed the workspace with demo transactions: when the API is down we
-  // show an honest empty state instead of invented money data.
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [liveState, setLiveState] = useState<LiveState>('loading');
   const [health, setHealth] = useState<{
@@ -42,7 +40,6 @@ export default function OverviewPage() {
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((d: { transactions?: unknown } | null) => {
         if (cancelled) return;
-        // API rows are the only source of truth — no local merge, no mock seed.
         setTransactions(mapApiTransactions(d?.transactions));
         setLiveState('live');
       })

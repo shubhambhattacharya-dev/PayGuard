@@ -1,15 +1,3 @@
-/**
- * PayGuard — Money Contract
- *
- * Invariants (PDF Table 7-2 & Chapter 23.4):
- * - Monetary values are integer minor units (e.g. cents).
- * - Floating-point arithmetic is strictly forbidden for money.
- * - Decimal parsing uses strict regex and BigInt.
- * - Intermediate math uses BigInt to prevent 64-bit overflow.
- * - Tax calculation uses Banker's Rounding (round half to even).
- * - Domain errors use stable, machine-readable MoneyErrorCode enums.
- */
-
 const MINOR_UNITS_PER_MAJOR = 100n;
 const BASIS_POINTS_DENOMINATOR = 10_000n;
 
@@ -106,19 +94,14 @@ export function roundHalfEven(numerator: bigint, denominator: bigint): bigint {
   const direction = numerator < 0n ? -1n : 1n;
   if (comparison > 0n) return quotient + direction;
 
-  // Exact tie: choose the nearest even integer
   return quotient % 2n === 0n ? quotient : quotient + direction;
 }
 
-/**
- * Parses a decimal string (e.g. "100.00", "45.5", "-12.25") into integer minor units.
- */
 export function fromMajorString(amount: string): MoneyMinor {
   if (typeof amount !== "string") {
     throw new MoneyValidationError("INVALID_AMOUNT_TYPE", "Amount must be a decimal string.");
   }
 
-  // ReDoS protection: bound length before regex
   if (amount.length > MAX_AMOUNT_STRING_LENGTH) {
     throw new MoneyValidationError("AMOUNT_OUT_OF_RANGE", "Amount string exceeds the supported length.");
   }
@@ -140,9 +123,6 @@ export function fromMajorString(amount: string): MoneyMinor {
   return toMoneyMinor(toSafeNumber(minor, "Parsed amount"));
 }
 
-/**
- * Calculates a line item's subtotal, tax, and total.
- */
 export function calculateLineTotal(
   unitPriceMinor: MoneyMinor,
   quantity: number,

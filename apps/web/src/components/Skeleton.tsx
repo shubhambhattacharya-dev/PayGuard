@@ -18,7 +18,6 @@ export function SkeletonBlock({ className = '' }: SkeletonBlockProps) {
 export function LedgerWorkspaceSkeleton() {
   return (
     <div aria-label="Loading payments workspace" role="status" className="space-y-6">
-      {/* KPI Strip Skeleton */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {Array.from({ length: 4 }).map((_, idx) => (
           <div
@@ -35,7 +34,6 @@ export function LedgerWorkspaceSkeleton() {
         ))}
       </div>
 
-      {/* Live Gate Bar Skeleton */}
       <div className="bg-[#111b17] rounded-xl border border-[rgba(222,242,227,0.12)] p-4 flex flex-wrap items-center justify-between gap-4">
         <div className="space-y-2">
           <SkeletonBlock className="h-4 w-44" />
@@ -47,7 +45,6 @@ export function LedgerWorkspaceSkeleton() {
         </div>
       </div>
 
-      {/* Ledger Grid Skeleton */}
       <div className="bg-[#111b17] rounded-xl border border-[rgba(222,242,227,0.12)] overflow-hidden">
         <div className="h-11 px-4 border-b border-[rgba(222,242,227,0.12)] flex items-center justify-between bg-[#101914]">
           <SkeletonBlock className="h-3 w-24" />

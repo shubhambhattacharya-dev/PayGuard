@@ -3,27 +3,11 @@ import { createHash } from 'node:crypto';
 import { request as httpRequest, type IncomingMessage } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 
-/**
- * Server-side proxy: the browser talks ONLY to this same-origin route; the
- * API key never ships to client JavaScript (two-app pattern: UI holds no
- * secrets). Forwards path segments verbatim to the PayGuard API.
- *
- * Uses raw node:https instead of global fetch: Next.js patches fetch in
- * route handlers, and the patched layer was observed dropping the
- * Authorization header on outbound calls (root cause of the 401 loop).
- *
- * View-only enforcement: when an unauthenticated visitor calls /v1/agent/run,
- * this proxy forces `proposeOnly: true` so the agent + policy gate run live
- * without debiting PostgreSQL or PayPal until the visitor unlocks Approver mode.
- */
-
 const TARGET_BASE = process.env.PAYGUARD_API_URL ?? 'http://localhost:4000';
 const API_KEY = process.env.PAYGUARD_API_KEY ?? '';
 const SESSION_COOKIE = 'pg_session';
 const DEFAULT_SANDBOX_SECRET = 'payguard-sandbox-reviewer-default-v1';
 
-// The proxy must execute on EVERY request — a cached route response would
-// freeze the first (possibly failed) upstream call forever.
 export const dynamic = 'force-dynamic';
 
 function hasValidApproverSession(request: NextRequest): boolean {
@@ -100,7 +84,6 @@ async function forward(request: NextRequest, pathSegments: readonly string[]): P
         const parsed = body.length > 0 ? (JSON.parse(body) as Record<string, unknown>) : {};
         body = JSON.stringify({ ...parsed, proposeOnly: true });
       } catch {
-        // leave malformed JSON for upstream 400 validation
       }
     }
     if (body.length > 0) {

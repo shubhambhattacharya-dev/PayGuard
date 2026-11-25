@@ -19,8 +19,8 @@ export type PolicyReasonCode =
   | 'DEPENDENCY_UNAVAILABLE';
 
 export interface ReasoningStep {
-  round: number; // 1, 2, 3, 4
-  name: string; // "search_catalog", "calculator", "draft_order", "policy gate"
+  round: number;
+  name: string;
   summary: string;
   detail: string;
 }

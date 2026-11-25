@@ -3,12 +3,6 @@ import type { Pool } from 'pg';
 import type { AuditEvent, QrApprovalRecord } from '../../server.js';
 import type { PayPalWebhookEvent, RailAction } from '../paypal/webhooks.js';
 
-/**
- * Durable side-store wired when PostgreSQL is configured. The server keeps
- * its in-memory maps as the hot read path; this adapter makes the evidence
- * and pending-approval state survive restarts (P1: split-brain durability).
- */
-
 export interface RailEntryRow {
   readonly settlementId: string;
   readonly ownerId: string;
@@ -36,12 +30,10 @@ export interface RailStateReport {
 
 export interface DurableStore {
   saveAuditEvent(event: AuditEvent): Promise<void>;
-  /** Newest-first audit history, used to rehydrate the read path at boot. */
   loadAuditEvents(limit?: number): Promise<AuditEvent[]>;
   saveQrApproval(record: QrApprovalRecord): Promise<void>;
   markQrUsed(code: string): Promise<void>;
   loadPendingQrApprovals(): Promise<QrApprovalRecord[]>;
-  /** Idempotent insert keyed by PayPal's event id. */
   saveRailEvent(event: PayPalWebhookEvent): Promise<'stored' | 'duplicate'>;
   applyRailAction(input: {
     readonly referenceId?: string | undefined;

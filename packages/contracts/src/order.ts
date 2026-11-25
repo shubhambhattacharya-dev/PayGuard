@@ -7,10 +7,6 @@ import {
 
 const BASIS_POINTS_DENOMINATOR = 10_000n;
 
-/**
- * Money is represented as non-negative, safe integer minor units.
- * Example: $19.99 USD = 1999 cents.
- */
 export const MoneyMinorSchema: z.ZodType<
   MoneyMinor,
   z.ZodTypeDef,
@@ -26,10 +22,6 @@ export const MoneyMinorSchema: z.ZodType<
   )
   .transform((value) => toMoneyMinor(value));
 
-/**
- * Reusable Banker's Rounding tax helper importing verified logic from money.ts.
- * 10,000 basis points = 100%. 1 basis point = 0.01%.
- */
 function calculateTaxMinor(
   taxableAmountMinor: number,
   taxBps: number,
@@ -38,9 +30,6 @@ function calculateTaxMinor(
   return roundHalfEven(numerator, BASIS_POINTS_DENOMINATOR);
 }
 
-/**
- * Reject totals that cannot be represented safely as JS numbers.
- */
 function isSafeMoneyTotal(value: bigint): boolean {
   return (
     value >= 0n &&
@@ -48,10 +37,6 @@ function isSafeMoneyTotal(value: bigint): boolean {
   );
 }
 
-/**
- * Single line item in an order proposal.
- * lineTotalMinor = quantity * unitPriceMinor, before tax.
- */
 export const LineItemSchema = z
   .object({
     sku: z
@@ -108,11 +93,6 @@ export const LineItemSchema = z
 
 export type LineItem = z.infer<typeof LineItemSchema>;
 
-/**
- * Order proposal produced by an untrusted AI agent.
- *
- * 1. Base object schema (without superRefine so it can be extended).
- */
 const OrderProposalBaseSchema = z
   .object({
     invoiceId: z
@@ -145,10 +125,6 @@ const OrderProposalBaseSchema = z
   })
   .strict();
 
-/**
- * 2. Reusable math validation shared by both proposal and record schemas:
- * the server recomputes every total with integer math and rejects any drift.
- */
 function validateOrderTotals(
   proposal: z.infer<typeof OrderProposalBaseSchema>,
   ctx: z.RefinementCtx,
@@ -207,18 +183,11 @@ function validateOrderTotals(
   }
 }
 
-/**
- * 3. OrderProposalSchema: the base schema with totals validation applied.
- */
 export const OrderProposalSchema =
   OrderProposalBaseSchema.superRefine(validateOrderTotals);
 
 export type OrderProposal = z.infer<typeof OrderProposalSchema>;
 
-/**
- * 4. OrderRecordSchema: base schema extended with persistence fields,
- * then strict + totals validation.
- */
 export const OrderRecordSchema = OrderProposalBaseSchema.extend({
   id: z.string().uuid(),
   ownerId: z.string().min(1),

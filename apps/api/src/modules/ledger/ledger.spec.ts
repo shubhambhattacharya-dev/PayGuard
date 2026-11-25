@@ -32,7 +32,7 @@ describe('InMemoryLedger (Atomic Settlement, Idempotency & Capability Verificati
 
   beforeEach(() => {
     ledger = new InMemoryLedger();
-    ledger.seedAccount(ownerId, 10000); // Initial balance $100.00 (10000 minor units)
+    ledger.seedAccount(ownerId, 10000);
   });
 
   it('rejects settlement when capability token is missing or forged (FORBIDDEN_CAPABILITY)', async () => {
@@ -90,7 +90,6 @@ describe('InMemoryLedger (Atomic Settlement, Idempotency & Capability Verificati
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
     });
 
-    // First call
     const firstResult = await ledger.settleOrder({
       ownerId,
       proposal: sampleProposal,
@@ -100,7 +99,6 @@ describe('InMemoryLedger (Atomic Settlement, Idempotency & Capability Verificati
     expect(firstResult.success).toBe(true);
     expect(ledger.getBalance(ownerId)).toBe(5000);
 
-    // Duplicate call with same idempotency key
     const duplicateResult = await ledger.settleOrder({
       ownerId,
       proposal: sampleProposal,
@@ -114,7 +112,6 @@ describe('InMemoryLedger (Atomic Settlement, Idempotency & Capability Verificati
         firstResult.settlement.settlementId,
       );
     }
-    // Balance must not be deducted twice
     expect(ledger.getBalance(ownerId)).toBe(5000);
   });
 
@@ -158,8 +155,6 @@ describe('InMemoryLedger (Atomic Settlement, Idempotency & Capability Verificati
   });
 
   it('prevents race conditions: concurrent requests cannot overdraft account', async () => {
-    // Initial balance is 10000 ($100.00). Each debit is 6000 ($60.00).
-    // Firing 2 parallel debits: exactly 1 must succeed, 1 must fail with INSUFFICIENT_FUNDS.
     const proposalA: OrderProposal = {
       ...sampleProposal,
       lineItems: [
@@ -229,6 +224,6 @@ describe('InMemoryLedger (Atomic Settlement, Idempotency & Capability Verificati
     expect(successes).toHaveLength(1);
     expect(failures).toHaveLength(1);
     expect((failures[0] as { error: string }).error).toBe('INSUFFICIENT_FUNDS');
-    expect(ledger.getBalance(ownerId)).toBe(4000); // 10000 - 6000 = 4000
+    expect(ledger.getBalance(ownerId)).toBe(4000);
   });
 });

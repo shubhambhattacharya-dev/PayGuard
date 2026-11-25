@@ -1,6 +1,3 @@
--- PayGuard initial PostgreSQL schema (80% Shell)
--- Stores durable ledger balances, idempotent settlement entries, settled invoices, and audit events.
-
 CREATE TABLE IF NOT EXISTS ledger_accounts (
   owner_id TEXT PRIMARY KEY,
   balance_minor BIGINT NOT NULL CHECK (balance_minor >= 0),
@@ -19,7 +16,6 @@ CREATE TABLE IF NOT EXISTS ledger_entries (
   CONSTRAINT uq_ledger_owner_idempotency UNIQUE (owner_id, idempotency_key)
 );
 
--- UI transactions list reads real settlements; vendor persisted at settle time.
 ALTER TABLE ledger_entries ADD COLUMN IF NOT EXISTS vendor_name TEXT NOT NULL DEFAULT 'Unknown vendor';
 
 CREATE TABLE IF NOT EXISTS settled_invoices (

@@ -1,6 +1,3 @@
--- PayGuard dynamic vendor & catalog onboarding (004)
--- Persists OTP-verified trusted vendors and custom catalog items across restarts.
-
 CREATE TABLE IF NOT EXISTS trusted_vendors (
   vendor_name TEXT PRIMARY KEY,
   whatsapp_phone TEXT NOT NULL,

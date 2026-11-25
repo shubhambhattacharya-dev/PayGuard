@@ -8,14 +8,12 @@ test.describe('PayGuard E2E Suite', () => {
     await page.goto('/');
     await expect(page.getByRole('heading', { name: /Let AI move faster/i })).toBeVisible();
 
-    // Switch explorable hero preview tabs
     await page.getByRole('tab', { name: 'Invoice Evidence' }).click();
     await expect(page.getByText(/quote-matcher\.ts/i)).toBeVisible();
 
     await page.getByRole('tab', { name: 'Audit Trail' }).click();
     await expect(page.getByText(/Append-only audit trail/i)).toBeVisible();
 
-    // Interactive sample payment demo
     await page.getByRole('button', { name: /Cedar Supply · \$64\.00/i }).click();
     await expect(page.getByText('OK_AUTO')).toBeVisible();
 
@@ -54,7 +52,6 @@ test.describe('PayGuard E2E Suite', () => {
     await expect(page.getByText(/Needs review/i)).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText(/Aster Cloud/i).locator('visible=true').first()).toBeVisible();
 
-    // Collapse sidebar and re-open via Header Menu button
     const hideBtn = page.getByRole('button', { name: 'Hide sidebar' });
     await expect(hideBtn).toBeVisible();
     await hideBtn.click();

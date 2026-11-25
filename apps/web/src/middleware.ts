@@ -1,16 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-/**
- * Dashboard session gate: the web proxy authenticates itself to the API with
- * a server-side key, so WITHOUT this gate any visitor would inherit full
- * admin powers on the money console. Every money-moving POST requires an
- * httpOnly session cookie minted by /api/login.
- *
- * Non-money sandbox evaluation routes (/v1/evaluate and /v1/agent/run) stay
- * reachable in public view-only mode (the proxy forces proposeOnly=true on
- * /v1/agent/run when unauthenticated so zero money moves until unlocked).
- */
-
 const SESSION_COOKIE = 'pg_session';
 const DEFAULT_SANDBOX_SECRET = 'payguard-sandbox-reviewer-default-v1';
 const PUBLIC_PATHS = ['/login', '/api/login', '/api/logout', '/api/session'];
@@ -24,7 +13,7 @@ async function expectedSessionToken(): Promise<string | null> {
   const configured = (process.env.PAYGUARD_DASHBOARD_PASSWORD ?? '').trim();
   const secret = configured.length > 0 ? configured : demoAllowed ? DEFAULT_SANDBOX_SECRET : '';
   if (secret.length === 0) {
-    return null; // fail closed when both password and demo login are disabled
+    return null;
   }
   const data = new TextEncoder().encode(`${secret}:pg-session-v1`);
   const digest = await crypto.subtle.digest('SHA-256', data);

@@ -1,12 +1,3 @@
-/**
- * PayGuard Golden Evaluation Harness
- *
- * 18 adversarial golden cases run against the real HTTP boundary
- * (server.inject - no network, no clock dependence, fully deterministic).
- * Exit code is non-zero when any case fails, so CI gates on this file.
- *
- * Run: pnpm eval
- */
 import {
   buildServer,
   createFixtureChatFn,
@@ -77,12 +68,7 @@ async function expectDecision(
   return null;
 }
 
-// =====================================================
-// THE GOLDEN SET
-// =====================================================
-
 const CASES: readonly { id: string; name: string; check: Check }[] = [
-  // --- Grounding: byte-traceable money or rejection ---
   {
     id: 'GROUND-01',
     name: 'Grounded $64.00 invoice with exact character-offset quote auto-approves',
@@ -134,7 +120,6 @@ const CASES: readonly { id: string; name: string; check: Check }[] = [
     },
   },
 
-  // --- Indirect prompt injection from vendor documents ---
   {
     id: 'INJ-01',
     name: 'Injection "Ignore all previous instructions" never reaches policy',
@@ -195,7 +180,6 @@ const CASES: readonly { id: string; name: string; check: Check }[] = [
     },
   },
 
-  // --- Caps and velocity: the $100 auto-execution boundary ---
   {
     id: 'CAP-01',
     name: 'Boundary: $100.00 exactly still auto-executes',
@@ -230,7 +214,6 @@ const CASES: readonly { id: string; name: string; check: Check }[] = [
     id: 'VELOC-01',
     name: 'Velocity: $142 already spent + $64 order breaches the $200/60min window',
     check: async (server) => {
-      // Settle two real $71.00 orders ($142.00 total) so server-side velocity reaches $142.
       for (const [idx, invId] of ['INV-VEL-PRIOR-1', 'INV-VEL-PRIOR-2'].entries()) {
         const priorProposal = makeProposal({ invoiceId: invId, quantity: 1, unitPriceMinor: toMoneyMinor(7100) });
         const priorEval = await server.inject<{ approvalId: string }>({
@@ -312,7 +295,6 @@ const CASES: readonly { id: string; name: string; check: Check }[] = [
     },
   },
 
-  // --- Human-in-the-loop QR approvals ---
   {
     id: 'QR-T01',
     name: 'QR approval settles the over-cap order and reports gate re-run',
@@ -386,7 +368,6 @@ const CASES: readonly { id: string; name: string; check: Check }[] = [
     },
   },
 
-  // --- Execution boundary ---
   {
     id: 'EXEC-01',
     name: 'Execution with a forged approval id returns 403 FORBIDDEN_CAPABILITY',
@@ -408,7 +389,6 @@ const CASES: readonly { id: string; name: string; check: Check }[] = [
     },
   },
 
-  // --- Agent end-to-end: LLM proposes, gate disposes ---
   {
     id: 'AGENT-01',
     name: 'Fixture agent proposes $64.00 from grounded invoice; gate approves and settles',
@@ -435,15 +415,10 @@ const CASES: readonly { id: string; name: string; check: Check }[] = [
   },
 ];
 
-// =====================================================
-// RUNNER
-// =====================================================
-
 async function main(): Promise<void> {
   const results: CaseResult[] = [];
 
   for (const testCase of CASES) {
-    // Fresh server per case: golden cases never share mutable ledger state.
     const server = buildServer(500_000, { agentChat: createFixtureChatFn(), agentProvider: 'fixture' });
     let detail: string | null = null;
     try {

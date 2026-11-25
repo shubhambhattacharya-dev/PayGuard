@@ -156,7 +156,6 @@ export function LedgerGrid({
       </div>
 
       <div className="hidden md:block">
-        {/* Table Header (No forced horizontal scrollbar) */}
         <div className="grid grid-cols-12 gap-2.5 px-4 py-3 border-b border-[rgba(222,242,227,0.12)] bg-[#101914]/90 text-[11px] font-semibold text-[#9aa9a0] uppercase tracking-wider select-none">
           <div className="col-span-3">Vendor</div>
           <div className="col-span-2">Invoice #</div>
@@ -166,7 +165,6 @@ export function LedgerGrid({
           <div className="col-span-2 text-right">Actions</div>
         </div>
 
-        {/* Rows */}
         <div className="divide-y divide-[rgba(222,242,227,0.08)]">
           {transactions.map((tx) => {
             const isSelected = tx.id === selectedTxId;
@@ -174,14 +172,12 @@ export function LedgerGrid({
 
             return (
               <div key={tx.id} className="transition-colors">
-                {/* Main Row */}
                 <div
                   onClick={() => onSelectTx(tx)}
                   className={`grid grid-cols-12 gap-2.5 px-4 py-3.5 items-center text-xs cursor-pointer transition-colors ${
                     isSelected ? 'bg-[#1c3428]/70' : 'hover:bg-[#15211b]/80'
                   }`}
                 >
-                  {/* Vendor Column with Expand Caret */}
                   <div className="col-span-3 flex items-center gap-2 min-w-0">
                     <button
                       onClick={(e) => {
@@ -196,13 +192,10 @@ export function LedgerGrid({
                     <span className="font-semibold text-[#eaf0eb] truncate">{tx.vendor}</span>
                   </div>
 
-                  {/* Invoice # */}
                   <div className="col-span-2 font-mono text-[#9aa9a0] truncate">{tx.invoiceNumber}</div>
 
-                  {/* Amount */}
                   <div className="col-span-1 font-semibold text-[#eaf0eb] tabular-nums">{tx.amountFormatted}</div>
 
-                  {/* Status Pill */}
                   <div className="col-span-2">
                     <span
                       className={`inline-block px-2.5 py-0.5 rounded-full text-[11px] font-medium border ${getStatusBadge(
@@ -213,7 +206,6 @@ export function LedgerGrid({
                     </span>
                   </div>
 
-                  {/* Policy Code Pill */}
                   <div className="col-span-2 min-w-0">
                     <span
                       className={`inline-block px-2 py-0.5 rounded-md text-[10px] font-mono border truncate max-w-full ${getPolicyCodeBadge(
@@ -224,7 +216,6 @@ export function LedgerGrid({
                     </span>
                   </div>
 
-                  {/* Actions */}
                   <div className="col-span-2 flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
                     {tx.canApproveReject ? (
                       <>
@@ -254,7 +245,6 @@ export function LedgerGrid({
                   </div>
                 </div>
 
-                {/* Master-Detail Expanded Reasoning Drawer */}
                 {isExpanded && tx.reasoningSteps.length > 0 && (
                   <div className="bg-[#0e1713]/90 px-10 py-3.5 border-t border-[rgba(222,242,227,0.08)]">
                     <div className="text-[11px] font-semibold text-[#eaf0eb] uppercase tracking-wider mb-2.5">

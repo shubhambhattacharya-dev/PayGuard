@@ -1,9 +1,3 @@
--- PayGuard production hardening (002)
--- 1. rail_events: durable, idempotent PayPal webhook event store (reconciliation source of truth)
--- 2. qr_approvals: pending HITL approvals survive restarts (Render free plan spins down)
--- 3. Global duplicate-invoice index: same invoiceId can never settle twice across idempotency keys
--- 4. owner+time index for the 60-minute velocity query
-
 CREATE TABLE IF NOT EXISTS rail_events (
   event_id TEXT PRIMARY KEY,
   event_type TEXT NOT NULL,

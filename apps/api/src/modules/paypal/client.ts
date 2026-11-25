@@ -14,11 +14,6 @@ export interface PayPalRequestOptions {
   readonly method: 'GET' | 'POST';
   readonly path: string;
   readonly body?: unknown;
-  /**
-   * Pre-serialized JSON body, sent byte-for-byte. Required for webhook
-   * postbacks: PayPal verifies webhook_event against the ORIGINAL
-   * transmission, so parse→re-serialize deviations can fail verification.
-   */
   readonly rawBody?: string;
   readonly idempotencyKey?: string;
 }

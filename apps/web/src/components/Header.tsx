@@ -44,7 +44,6 @@ export function Header({
         setTheme(current);
       }
     } catch {
-      // ignore storage errors
     }
   }, []);
 
@@ -58,7 +57,6 @@ export function Header({
         setDemoAllowed(data.demoAllowed);
       }
     } catch {
-      // ignore network errors
     }
   }, []);
 
@@ -102,7 +100,6 @@ export function Header({
     try {
       localStorage.setItem('pg-color-scheme', next);
     } catch {
-      // ignore storage errors
     }
   };
 
@@ -143,7 +140,6 @@ export function Header({
 
   return (
     <header className="min-h-14 bg-[#0b1210]/85 backdrop-blur-xl border-b border-[rgba(222,242,227,0.12)] px-4 sm:px-6 md:px-8 py-2 flex flex-wrap items-center justify-between gap-2 sticky top-0 z-20">
-      {/* Left: Sidebar Toggle, Date & Sandbox Status */}
       <div className="flex items-center gap-3 sm:gap-4">
         {onToggleSidebar && sidebarCollapsed && (
           <button
@@ -173,7 +169,6 @@ export function Header({
         </div>
       </div>
 
-      {/* Right: Toast + Role Switcher + Theme Toggle + Inspector Drawer Toggle */}
       <div className="flex items-center gap-2 flex-wrap">
         {toastMessage && (
           <div className="flex items-center gap-2 bg-[rgba(40,187,131,0.14)] backdrop-blur-md border border-[rgba(40,187,131,0.3)] text-[#84e5b3] text-xs px-3 py-1.5 rounded-lg shadow-sm">

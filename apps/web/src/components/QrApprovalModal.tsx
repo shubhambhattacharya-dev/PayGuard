@@ -41,7 +41,6 @@ export function QrApprovalModal({
     setTimeLeft(initialRemaining);
     setErrorMsg(null);
 
-    // Generate real QR code image pointing to the live /approvals page
     const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
     const approvalUrl = `${origin}/approvals?code=${encodeURIComponent(singleUseCode)}`;
     QRCode.toDataURL(approvalUrl, { width: 180, margin: 1 })
@@ -70,7 +69,6 @@ export function QrApprovalModal({
         aria-labelledby="qr-modal-title"
         className="bg-[#111b17] rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-[rgba(222,242,227,0.16)] relative text-[#eaf0eb]"
       >
-        {/* Close Button */}
         <button
           onClick={onClose}
           className="absolute right-4 top-4 text-[#9aa9a0] hover:text-[#c8f169] p-1 rounded-lg transition-colors"
@@ -79,7 +77,6 @@ export function QrApprovalModal({
           <X className="w-5 h-5" />
         </button>
 
-        {/* Title */}
         <div className="flex items-center gap-2 mb-1">
           <ShieldCheck className="w-5 h-5 text-[#c8f169]" />
           <h3 id="qr-modal-title" className="font-semibold text-sm text-[#eaf0eb]">
@@ -90,7 +87,6 @@ export function QrApprovalModal({
           Scan with your phone camera to review and authorize. Full policy gate re-validates at scan time.
         </p>
 
-        {/* Invoice Summary Box */}
         <div className="bg-[#15211b] p-3 rounded-lg flex items-center justify-between mb-4 border border-[rgba(222,242,227,0.12)]">
           <div>
             <div className="text-xs font-medium text-[#eaf0eb]">{vendorName}</div>
@@ -99,7 +95,6 @@ export function QrApprovalModal({
           <div className="text-sm font-semibold text-[#eaf0eb] tabular-nums">{amountFormatted}</div>
         </div>
 
-        {/* QR Code Container (white scan-pad inside dark frame for reliable camera contrast) */}
         <div className="flex flex-col items-center justify-center py-4 mb-4 bg-[#15211b] rounded-xl border border-dashed border-[rgba(222,242,227,0.18)]">
           {qrDataUrl ? (
             <div className="p-2 bg-white rounded-xl shadow-sm">
@@ -119,7 +114,6 @@ export function QrApprovalModal({
           </div>
         </div>
 
-        {/* Timer */}
         <div className="flex items-center justify-center gap-1.5 text-xs text-[#ffc477] font-medium mb-5 bg-[rgba(255,184,107,0.12)] py-1.5 rounded-lg border border-[rgba(255,184,107,0.28)] tabular-nums">
           <Clock className="w-3.5 h-3.5 text-[#ffc477]" />
           <span>
@@ -133,7 +127,6 @@ export function QrApprovalModal({
           </div>
         )}
 
-        {/* Live API QR Scan Approval Button */}
         <button
           disabled={submitting}
           onClick={async () => {

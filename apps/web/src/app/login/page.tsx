@@ -3,11 +3,6 @@
 import { Suspense, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 
-/**
- * Finance-console login. Supports 1-click Sandbox Reviewer unlock for founders
- * and hiring panels alongside timing-safe admin password authentication.
- */
-
 function LoginForm() {
   const params = useSearchParams();
   const [password, setPassword] = useState('');

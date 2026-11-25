@@ -2,10 +2,6 @@ import { z } from 'zod';
 import { OrderProposalSchema, roundHalfEven, toMoneyMinor, type OrderProposal } from '@payguard/contracts';
 import type { CatalogStore } from './catalog.js';
 
-// =====================================================
-// TOOL SCHEMAS - the only capabilities the model can invoke
-// =====================================================
-
 export const SearchCatalogArgsSchema = z
   .object({ query: z.string().trim().min(1, 'Query must not be empty').max(120, 'Query must not exceed 120 characters') })
   .strict();
@@ -58,11 +54,6 @@ export interface ParsedToolCall {
 
 const TOOL_NAMES: readonly ToolName[] = ['search_catalog', 'calculate_total', 'draft_order'];
 
-/**
- * Parse a model assistant message into a registered tool call.
- * Accepts raw JSON or a ```json fenced block; anything else returns null
- * and the loop feeds back a synthetic tool-error observation.
- */
 export function parseToolCall(assistantText: string): ParsedToolCall | null {
   const fenced = assistantText.match(/```(?:json)?\s*([\s\S]*?)```/);
   const candidate = (fenced?.[1] ?? assistantText).trim();
@@ -88,10 +79,6 @@ export function parseToolCall(assistantText: string): ParsedToolCall | null {
   return null;
 }
 
-// =====================================================
-// TOOL OBSERVATIONS - every deviation lands here as typed text
-// =====================================================
-
 export interface ToolObservation {
   readonly ok: boolean;
   readonly tool: ToolName | null;
@@ -114,10 +101,6 @@ function zodSummary(error: z.ZodError): string {
 
 const MAX_SAFE_MONEY = BigInt(Number.MAX_SAFE_INTEGER);
 
-/**
- * Integer money math: tax = roundHalfEven(lineTotal * taxBps / 10000) computed
- * in BigInt so it matches OrderProposalSchema's Banker's Rounding.
- */
 function taxMinorFor(lineTotalMinor: bigint, taxBps: number): bigint {
   if (taxBps === 0) {
     return 0n;
@@ -169,10 +152,6 @@ function buildProposalFromDraft(
   };
 }
 
-/**
- * Dispatch a parsed tool call against the catalog. Server-side re-validation
- * happens on every call: valid-echoing model JSON is never trusted.
- */
 export function dispatchToolCall(call: ParsedToolCall | null, catalog: CatalogStore): ToolObservation {
   if (call === null) {
     return observationError(

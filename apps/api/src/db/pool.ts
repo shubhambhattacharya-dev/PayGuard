@@ -15,10 +15,6 @@ export function createPgPool(connectionString: string): Pool {
   });
 }
 
-/**
- * Runs every migration file in sorted order. All migrations are idempotent
- * (CREATE ... IF NOT EXISTS), so re-running is safe on every boot.
- */
 export async function runMigrations(pool: Pool): Promise<void> {
   const localDir = path.join(__dirname, 'migrations');
   const srcFallbackDir = path.resolve(__dirname, '../../src/db/migrations');

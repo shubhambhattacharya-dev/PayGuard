@@ -3,21 +3,11 @@ import { OrderProposalSchema, type OrderProposal } from './order.js';
 
 const randomUUID = (): string => globalThis.crypto.randomUUID();
 
-// =====================================================
-// DECISION STATES
-// =====================================================
-
 export type DecisionState = 'APPROVED' | 'HOLD' | 'REJECTED';
 
-// =====================================================
-// STABLE REASON CODES (PDF Table 4-1 & Section 7.2)
-// =====================================================
-
 export enum ReasonCode {
-  // Approval
   OK_AUTO = 'OK_AUTO',
 
-  // Human review
   HOLD_OVER_CAP = 'HOLD_OVER_CAP',
   HOLD_VELOCITY_LIMIT = 'HOLD_VELOCITY_LIMIT',
   HOLD_DAILY_CAP_EXCEEDED = 'HOLD_DAILY_CAP_EXCEEDED',
@@ -25,7 +15,6 @@ export enum ReasonCode {
   HOLD_VENDOR_UNTRUSTED = 'HOLD_VENDOR_UNTRUSTED',
   HOLD_MANUAL_REVIEW = 'HOLD_MANUAL_REVIEW',
 
-  // Rejection
   REJECT_SCHEMA_INVALID = 'REJECT_SCHEMA_INVALID',
   REJECT_PROMPT_INJECTION = 'REJECT_PROMPT_INJECTION',
   REJECT_UNCATALOGUED_SKU = 'REJECT_UNCATALOGUED_SKU',
@@ -34,16 +23,10 @@ export enum ReasonCode {
   REJECT_DUPLICATE_INVOICE = 'REJECT_DUPLICATE_INVOICE',
   REJECT_TENANT_MISMATCH = 'REJECT_TENANT_MISMATCH',
 
-  // Dependency failure: fail closed
   DEPENDENCY_UNAVAILABLE = 'DEPENDENCY_UNAVAILABLE',
 
-  // Execution outcomes
   AUTO_EXECUTED = 'AUTO_EXECUTED',
 }
-
-// =====================================================
-// DEEP READONLY
-// =====================================================
 
 export type DeepReadonly<T> = T extends (...args: never[]) => unknown
   ? T
@@ -52,10 +35,6 @@ export type DeepReadonly<T> = T extends (...args: never[]) => unknown
   : T extends object
   ? { readonly [K in keyof T]: DeepReadonly<T[K]> }
   : T;
-
-// =====================================================
-// APPROVAL CAPABILITY
-// =====================================================
 
 declare const ApprovedForExecutionBrand: unique symbol;
 
@@ -70,10 +49,6 @@ export type ApprovedForExecution = {
   readonly idempotencyKey: string;
   readonly policyVersion: string;
 };
-
-// =====================================================
-// REASON CODE GROUPS
-// =====================================================
 
 export type ApprovedReasonCode = ReasonCode.OK_AUTO;
 
@@ -95,18 +70,10 @@ export type RejectedReasonCode =
   | ReasonCode.REJECT_DUPLICATE_INVOICE
   | ReasonCode.REJECT_TENANT_MISMATCH;
 
-// =====================================================
-// DECISION METADATA
-// =====================================================
-
 export type DecisionMetadata = {
   readonly decisionId: string;
   readonly evaluatedAt: string;
 };
-
-// =====================================================
-// INTERNAL POLICY DECISION
-// =====================================================
 
 export type PolicyDecision =
   | (DecisionMetadata & {
@@ -123,10 +90,6 @@ export type PolicyDecision =
       readonly reasonCode: RejectedReasonCode;
     });
 
-// =====================================================
-// PUBLIC API DECISION
-// =====================================================
-
 export type PublicPolicyDecision =
   | (DecisionMetadata & {
       readonly state: 'APPROVED';
@@ -140,10 +103,6 @@ export type PublicPolicyDecision =
       readonly state: 'REJECTED';
       readonly reasonCode: RejectedReasonCode;
     });
-
-// =====================================================
-// POLICY ERROR CONTRACT
-// =====================================================
 
 export type PolicyEvaluationErrorCode =
   | 'POLICY_EVALUATION_FAILED'
@@ -165,10 +124,6 @@ export type PolicyEvaluationResult =
       readonly error: PolicyEvaluationError;
     };
 
-// =====================================================
-// PAYMENT EXECUTION RESULT
-// =====================================================
-
 export type PaymentExecutionResult =
   | {
       readonly state: 'EXECUTED';
@@ -187,15 +142,7 @@ export type PaymentExecutionResult =
       readonly retryable: boolean;
     };
 
-// =====================================================
-// 1. PRIVATE RUNTIME CAPABILITY REGISTRY
-// =====================================================
-
 const issuedTokens = new WeakSet<object>();
-
-// =====================================================
-// 2. CONTROLLED CAPABILITY ERRORS
-// =====================================================
 
 export type CapabilityErrorCode =
   | 'APPROVAL_CAPABILITY_INVALID'
@@ -207,10 +154,6 @@ export class CapabilityError extends Error {
     this.name = 'CapabilityError';
   }
 }
-
-// =====================================================
-// 3. DEEP FREEZE
-// =====================================================
 
 function deepFreeze<T>(value: T): DeepReadonly<T> {
   if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -230,10 +173,6 @@ function createProposalSnapshot(proposal: OrderProposal): DeepReadonly<OrderProp
   return deepFreeze(snapshot);
 }
 
-// =====================================================
-// 5. APPROVAL INPUT
-// =====================================================
-
 export type ApprovalInput = {
   readonly ownerId: string;
   readonly proposal: OrderProposal;
@@ -241,10 +180,6 @@ export type ApprovalInput = {
   readonly policyVersion: string;
   readonly expiresAt: string;
 };
-
-// =====================================================
-// 6. ISSUE AN APPROVAL CAPABILITY
-// =====================================================
 
 export function issueApprovedToken(input: ApprovalInput): ApprovedForExecution {
   const parsed = OrderProposalSchema.safeParse(input.proposal);
@@ -287,10 +222,6 @@ export function issueApprovedToken(input: ApprovalInput): ApprovedForExecution {
   return token;
 }
 
-// =====================================================
-// 7. VERIFY A TOKEN AT RUNTIME
-// =====================================================
-
 export function assertApprovedForExecution(value: unknown): asserts value is ApprovedForExecution {
   if (typeof value !== 'object' || value === null || !issuedTokens.has(value)) {
     throw new CapabilityError('APPROVAL_CAPABILITY_INVALID');
@@ -308,10 +239,6 @@ export function assertApprovedForExecution(value: unknown): asserts value is App
   }
 }
 
-// =====================================================
-// 8. SAFE PUBLIC DECISION MAPPING
-// =====================================================
-
 export function toPublicPolicyDecision(decision: PolicyDecision): PublicPolicyDecision {
   if (decision.state === 'APPROVED') {
     const { approvedToken: _internalCapability, ...publicDecision } = decision;
@@ -319,10 +246,6 @@ export function toPublicPolicyDecision(decision: PolicyDecision): PublicPolicyDe
   }
   return decision;
 }
-
-// =====================================================
-// 9. EXPLICIT HOLD RESULT FOR DEPENDENCY FAILURE
-// =====================================================
 
 export function createDependencyHold(decisionId = randomUUID()): PolicyDecision {
   return {

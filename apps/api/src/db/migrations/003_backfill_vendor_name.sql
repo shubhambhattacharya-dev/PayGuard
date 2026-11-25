@@ -1,8 +1,3 @@
--- Backfill legacy settlements whose vendor_name predates the column.
--- Existing rows received the 'Unknown vendor' default when 001 added the
--- column; audit events already recorded the real vendor for those invoices.
--- This is idempotent: it only touches rows still marked 'Unknown vendor'.
-
 UPDATE ledger_entries AS le
 SET vendor_name = source.vendor
 FROM (

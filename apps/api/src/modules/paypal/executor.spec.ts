@@ -163,7 +163,6 @@ describe('PayPal executor (the only door to money)', () => {
   it('expired capability token is rejected before any network call', async () => {
     const client = fakeClient(() => ({ ok: true, status: 201, data: { id: 'X', status: 'CREATED' } }));
 
-    // Mint a token that is valid at issuance, then let it expire before executing.
     const almostExpired = issueApprovedToken({
       ownerId: 'owner_northstar',
       proposal: sampleProposal,

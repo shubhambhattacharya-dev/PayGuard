@@ -1,10 +1,6 @@
 import { assertApprovedForExecution, type ApprovedForExecution } from '@payguard/contracts';
 import type { PayPalClient } from './client.js';
 
-// =====================================================
-// EXECUTION RESULT
-// =====================================================
-
 export type PayPalExecutionErrorCode =
   | 'CAPABILITY_INVALID'
   | 'PAYPAL_AUTH_FAILED'
@@ -26,11 +22,6 @@ export type PayPalExecutionResult =
     };
 
 export interface PayPalExecutor {
-  /**
-   * Moves money on the PayPal rail. The branded ApprovedForExecution
-   * parameter makes gateless invocation a compile-time error; the runtime
-   * assertion re-verifies the token was minted by this process's gate.
-   */
   execute(token: ApprovedForExecution): Promise<PayPalExecutionResult>;
 }
 
@@ -48,10 +39,6 @@ function toOrderValue(totalMinor: number): string {
   return (totalMinor / 100).toFixed(2);
 }
 
-/**
- * create -> capture order flow. Retries and 401 refresh live inside the
- * PayPalClient; 422 is terminal (no retry), mapped from the client layer.
- */
 export function createPayPalExecutor(client: PayPalClient): PayPalExecutor {
   return {
     async execute(token: ApprovedForExecution): Promise<PayPalExecutionResult> {
@@ -75,8 +62,6 @@ export function createPayPalExecutor(client: PayPalClient): PayPalExecutor {
           purchase_units: [
             {
               reference_id: token.idempotencyKey.slice(0, 127),
-              // custom_id is what PayPal reliably surfaces on PAYMENT.CAPTURE.*
-              // webhook events - it is the durable webhook→ledger linkage.
               custom_id: token.idempotencyKey.slice(0, 127),
               description: `PayGuard settlement ${token.proposal.invoiceId}`.slice(0, 127),
               amount: {

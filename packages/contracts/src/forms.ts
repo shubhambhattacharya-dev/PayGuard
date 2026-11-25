@@ -1,11 +1,5 @@
 import { z } from 'zod';
 
-/**
- * Strict user-facing form schemas shared between @payguard/web and @payguard/api.
- * Enforces letter-containing names (blocks numbers-only or symbol garbage),
- * bounded quantities/prices, and E.164-compatible WhatsApp numbers.
- */
-
 export const VendorNameFieldSchema = z
   .string()
   .trim()

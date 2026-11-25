@@ -2,14 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { buildServer, type ApiKeyRole } from './server.js';
 import { toMoneyMinor, type OrderProposal } from '@payguard/contracts';
 
-/**
- * Auth gate (P0-1) + approvals-surface regression (P0-2):
- * identity comes from the API key only; client-supplied ownerId cannot
- * impersonate another tenant; nothing /v1 is reachable unauthenticated.
- */
-
 function makeProposal(overrides: { invoiceId?: string; vendorName?: string; totalMinor?: number } = {}): OrderProposal {
-  const total = overrides.totalMinor ?? 5000; // $50.00 - under the $100 auto cap
+  const total = overrides.totalMinor ?? 5000;
   return {
     invoiceId: overrides.invoiceId ?? 'INV-AUTH-01',
     vendorName: overrides.vendorName ?? 'Cedar Supply',
@@ -98,7 +92,6 @@ describe('API-key auth gate (P0-1)', () => {
   it('execute: forged tokens and foreign identities cannot move money', async () => {
     const server = buildServer(500_000, { auth: { keys: KEYS } });
 
-    // Foreign identity on execute is 403 before anything settles.
     const foreign = await server.inject({
       method: 'POST',
       url: '/v1/execute',
@@ -115,7 +108,6 @@ describe('API-key auth gate (P0-1)', () => {
   it('HITL approve is tenant-scoped: a foreign key cannot approve another owner QR (404, not 403)', async () => {
     const server = buildServer(500_000, { auth: { keys: KEYS } });
 
-    // Seed demo QR belongs to owner_northstar.
     const foreign = await server.inject({
       method: 'POST',
       url: '/v1/hitl/approve',
@@ -190,8 +182,6 @@ describe('Maker-checker roles', () => {
       expect(res.json<{ error: string }>().error).toBe('FORBIDDEN_ROLE');
     }
 
-    // Maker-checker on /v1/agent/run: proposer can draft via the agent and receive an approvalId,
-    // but must NEVER auto-settle money in the ledger.
     const agentDraft = await server.inject<{
       decision: { state: string };
       approvalId?: string;
@@ -251,8 +241,6 @@ it('RE-AUDIT regression: proposer sending the FULL key:owner form cannot escalat
       roles: new Map<string, ApiKeyRole>([['pgk_prop', 'proposer']]),
     },
   });
-  // Same proposer key, but in the full env-entry form (with owner suffix) —
-  // the role lookup must normalize it, NOT default the missing entry to admin.
   for (const url of ['/v1/hitl/approve', '/v1/transactions/tx-1/approve']) {
     const res = await server.inject({
       method: 'POST',
@@ -263,7 +251,6 @@ it('RE-AUDIT regression: proposer sending the FULL key:owner form cannot escalat
     expect(res.statusCode, `${url} full-form proposer must stay 403`).toBe(403);
     expect(res.json<{ error: string }>().error).toBe('FORBIDDEN_ROLE');
   }
-  // Sanity: full form still drafts fine (evaluate has no role restriction).
   const evaluate = await server.inject({
     method: 'POST',
     url: '/v1/evaluate',

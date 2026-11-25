@@ -3,11 +3,7 @@ import type { OrderProposal } from '@payguard/contracts';
 import { createCatalog, DEFAULT_CATALOG, type CatalogStore } from './catalog.js';
 import { dispatchToolCall, parseToolCall, type ToolObservation } from './tools.js';
 
-export const MAX_ROUNDS = 4; // hard cap enforced in code, never in the prompt
-
-// =====================================================
-// MESSAGES AND CHAT FUNCTIONS
-// =====================================================
+export const MAX_ROUNDS = 4;
 
 export interface AgentChatMessage {
   readonly role: 'system' | 'user' | 'assistant' | 'tool';
@@ -30,10 +26,6 @@ export interface AgentRunResult {
   readonly proposal: OrderProposal | null;
   readonly terminalReason: AgentTerminalReason;
 }
-
-// =====================================================
-// UNTRUSTED-TEXT FENCING (belt-and-suspenders: the gate is the wall)
-// =====================================================
 
 export const FENCE_NONCE = 'PG-FENCE-7F3K9D2L';
 
@@ -67,10 +59,6 @@ export function buildSystemPrompt(catalog?: CatalogStore): string {
     '{"tool":"search_catalog","args":{"query":"paper"}}',
   ].join('\n');
 }
-
-// =====================================================
-// REACT LOOP WITH HARD CAP
-// =====================================================
 
 export async function runAgentLoop(input: {
   readonly goal: string;
@@ -113,13 +101,8 @@ export async function runAgentLoop(input: {
     );
   }
 
-  // Cap reached: no money moves; the caller fails closed to HOLD.
   return { roundsUsed: MAX_ROUNDS, thoughts, proposal: null, terminalReason: 'ROUND_CAP_REACHED' };
 }
-
-// =====================================================
-// PROVIDER ROUTER - Gemini primary, Groq fast lane, fixture replay
-// =====================================================
 
 export type ProviderName = 'gemini' | 'groq' | 'gemini+groq' | 'fixture';
 
@@ -155,10 +138,6 @@ function toOpenAiMessages(messages: readonly AgentChatMessage[]): { role: string
   }));
 }
 
-/**
- * Gemini chat with a model chain: 404 (retired model) skips to the next
- * model; 429/503 (rate limit / high demand) retries once after a pause.
- */
 function createGeminiChatFn(apiKey: string, models: readonly string[], fetchFn: typeof fetch): AgentChatFn {
   return async (messages) => {
     let lastError = 'GEMINI_UNAVAILABLE';
@@ -168,7 +147,6 @@ function createGeminiChatFn(apiKey: string, models: readonly string[], fetchFn: 
           `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
           {
             method: 'POST',
-            // Key goes in a header, never in the URL query (no leak into logs/proxies).
             headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
             body: JSON.stringify({
               contents: [{ role: 'user', parts: [{ text: flattenForGemini(messages) }] }],
@@ -181,7 +159,6 @@ function createGeminiChatFn(apiKey: string, models: readonly string[], fetchFn: 
           const data = (await res.json()) as {
             candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] } }[];
           };
-          // Join only final-answer parts; thinking-model thought parts are never tool calls.
           const text = (data.candidates?.[0]?.content?.parts ?? [])
             .filter((part) => typeof part.text === 'string' && part.thought !== true)
             .map((part) => part.text ?? '')
@@ -195,13 +172,13 @@ function createGeminiChatFn(apiKey: string, models: readonly string[], fetchFn: 
         }
         if (res.status === 404) {
           lastError = `GEMINI_MODEL_RETIRED_${model}`;
-          break; // skip to next model in the chain
+          break;
         }
         if (res.status === 429 || res.status === 503) {
           lastError = `GEMINI_HTTP_${res.status}_${model}`;
           if (attempt === 0) {
             await sleep(1500);
-            continue; // transient - retry the same model once
+            continue;
           }
           break;
         }
@@ -249,7 +226,7 @@ function createGroqChatFn(apiKey: string, models: readonly string[], fetchFn: ty
         messages: toOpenAiMessages(messages),
       };
       if (model.startsWith('openai/gpt-oss')) {
-        body.reasoning_effort = 'low'; // keep reasoning short so the tool-call JSON is emitted
+        body.reasoning_effort = 'low';
       }
 
       let res: Response;
@@ -264,7 +241,7 @@ function createGroqChatFn(apiKey: string, models: readonly string[], fetchFn: ty
           fetchFn,
         );
         if ((res.status === 429 || res.status === 503) && attempt === 0) {
-          await sleep(2500); // free-tier rate limit / transient 503 - one patient retry
+          await sleep(2500);
           continue;
         }
         break;
@@ -303,11 +280,6 @@ function createGroqChatFn(apiKey: string, models: readonly string[], fetchFn: ty
   };
 }
 
-/**
- * Dual-provider routing with failover: Gemini primary, Groq fast lane on
- * Gemini failure, null when no provider key is configured - callers must
- * fail closed (HOLD), never open the gate.
- */
 export function createProviderChatFn(config: ProviderConfig): { chat: AgentChatFn; provider: ProviderName } | null {
   const fetchFn = config.fetchFn ?? fetch;
   const geminiModels = [config.geminiModel?.trim() || process.env.GEMINI_MODEL?.trim() || '', ...DEFAULT_GEMINI_MODELS].filter(
@@ -325,8 +297,6 @@ export function createProviderChatFn(config: ProviderConfig): { chat: AgentChatF
   const groq = config.groqApiKey ? createGroqChatFn(config.groqApiKey, groqModels, fetchFn) : null;
 
   if (gemini && groq) {
-    // Per-instance circuit breaker: once Gemini fails, this chat function
-    // stops paying the primary's latency for the rest of the agent run.
     let geminiBroken = false;
     return {
       provider: 'gemini+groq',
@@ -335,7 +305,7 @@ export function createProviderChatFn(config: ProviderConfig): { chat: AgentChatF
           try {
             return await gemini(messages);
           } catch {
-            geminiBroken = true; // fail over to Groq for all remaining rounds
+            geminiBroken = true;
           }
         }
         return groq(messages);
@@ -350,10 +320,6 @@ export function createProviderChatFn(config: ProviderConfig): { chat: AgentChatF
   }
   return null;
 }
-
-// =====================================================
-// RECORDED FIXTURE MODEL - deterministic replay for tests and offline demos
-// =====================================================
 
 const FIXTURE_SCRIPT: readonly string[] = [
   '{"tool":"search_catalog","args":{"query":"paper"}}',
@@ -411,7 +377,6 @@ export function createFixtureChatFn(
         activeScript = CHAIR_FIXTURE_SCRIPT;
       }
     }
-    // The last non-observation position determines the next scripted step.
     const roundIndex = messages.filter((message) => message.role === 'assistant').length;
     const line = activeScript[roundIndex];
     if (line === undefined) {

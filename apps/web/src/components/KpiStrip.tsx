@@ -38,7 +38,6 @@ function formatMinorUsd(minor: number): string {
 }
 
 export function KpiStrip({ transactions }: { transactions?: Transaction[] }) {
-  // Zero-state defaults: never invent demo counts when no live data is loaded.
   let needsReviewText = '0 bills · $0.00';
   let awaitingApprovalText = '0 bills · $0.00';
   let autoExecutedText = '0 bills';

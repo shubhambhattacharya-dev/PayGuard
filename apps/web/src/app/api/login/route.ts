@@ -1,15 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createHash, timingSafeEqual } from 'node:crypto';
 
-/**
- * Mints the dashboard httpOnly session cookie.
- * Supports:
- * 1. Timing-safe admin password verification (PAYGUARD_DASHBOARD_PASSWORD).
- * 2. Frictionless 1-click Sandbox Reviewer unlock ({ demo: true }) so founders
- *    and hiring reviewers can test HITL QR approvals without a password wall,
- *    unless PAYGUARD_ALLOW_DEMO_LOGIN=false is explicitly set.
- */
-
 const SESSION_COOKIE = 'pg_session';
 const DEFAULT_SANDBOX_SECRET = 'payguard-sandbox-reviewer-default-v1';
 

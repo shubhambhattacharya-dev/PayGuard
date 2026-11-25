@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createHash } from 'node:crypto';
 
-/** Public endpoint: tells the UI whether an approver session is active and whether 1-click sandbox unlock is enabled. */
 const SESSION_COOKIE = 'pg_session';
 const DEFAULT_SANDBOX_SECRET = 'payguard-sandbox-reviewer-default-v1';
 

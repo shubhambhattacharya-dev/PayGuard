@@ -38,13 +38,11 @@ import {
   type TracePayload,
 } from './modules/observability/telemetry.js';
 
-
 export interface InjectOptions {
   readonly method: 'GET' | 'POST' | 'OPTIONS';
   readonly url: string;
   readonly payload?: unknown;
   readonly headers?: Record<string, string>;
-  /** Original request body bytes — webhook postback fidelity depends on it. */
   readonly rawBody?: string;
 }
 
@@ -149,7 +147,6 @@ export function detectPromptInjection(text: string): string | null {
   return null;
 }
 
-/** Maker-checker roles: 'proposer' drafts, 'approver' moves money, 'admin' does both. */
 export type ApiKeyRole = 'admin' | 'proposer' | 'approver';
 
 const MONEY_MOVING_ROLES: readonly ApiKeyRole[] = ['approver', 'admin'];
@@ -200,36 +197,14 @@ interface VendorOtpChallenge {
 }
 
 export interface BuildServerOptions {
-  /**
-   * PayPal rail behind the policy gate. When omitted, /v1/execute settles the
-   * in-memory ledger and returns a simulated sandbox reference (offline demo).
-   */
   paypalExecutor?: PayPalExecutor;
-  /**
-   * PayPal webhook verification inputs (client + webhook id). The webhook
-   * route stays public; PayPal's signature is the identity.
-   */
   readonly paypalWebhook?: PayPalWebhookConfig;
   readonly ledger?: LedgerStore
-  /**
-   * API-key auth. Key -> ownerId map (plus optional key -> role map for
-   * maker-checker: 'proposer' | 'approver' | 'admin', default admin); every
-   * /v1 route (except health and the signature-verified webhook route) then
-   * requires `Authorization: Bearer`. Identity is always taken from the key,
-   * never from the request body. Money-moving routes additionally require an
-   * approver/admin role. `undefined` = auth disabled (demo/test mode only).
-   */
   readonly auth?: {
     readonly keys: ReadonlyMap<string, string>;
     readonly roles?: ReadonlyMap<string, ApiKeyRole>;
   };
-  /** Durable side-store: audit evidence, pending QR approvals, rail events. */
   readonly durability?: DurableStore;
-  /**
-   * Agent chat function. `undefined` = auto (Gemini -> Groq from env keys);
-   * `null` = no model available, agent route fails closed to HOLD;
-   * a function = injected model (tests / recorded fixture replay).
-   */
   readonly agentChat?: AgentChatFn | null;
   readonly agentProvider?: ProviderName;
   readonly catalog?: CatalogStore;
@@ -246,7 +221,6 @@ export interface AgentRunRequestPayload {
   readonly goal?: string;
   readonly idempotencyKey?: string;
   readonly model?: 'auto' | 'fixture';
-  /** View-only sandbox preview: runs injection scan + agent + gate without settling or persisting QR state. */
   readonly proposeOnly?: boolean;
 }
 
@@ -255,15 +229,12 @@ export interface PayGuardServer {
   readonly capabilityVault: Map<string, ApprovedForExecution>;
   readonly qrApprovals: Map<string, QrApprovalRecord>;
   inject<T = unknown>(options: InjectOptions): Promise<InjectResponse<T>>;
-  /** Restores pending QR approvals from the durable store (call once at boot). */
   hydrate(): Promise<void>;
   listen(port?: number): Promise<{ port: number; close: () => Promise<void> }>;
 }
 
 export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: BuildServerOptions = {}): PayGuardServer {
   const ledger = serverOptions.ledger ?? new InMemoryLedger();
-  // Durable PostgreSQL mode must never fall back to demo seed rows: real
-  // deployments should show only persisted settlements and approvals.
   const isDurableLedger = ledger instanceof PostgresLedger;
   if (!serverOptions.ledger) {
     ledger.seedAccount('owner_northstar', initialSeedBalanceMinor);
@@ -271,23 +242,18 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
 
   }
 
-
   const capabilityVault = new Map<string, ApprovedForExecution>();
   const qrApprovals = new Map<string, QrApprovalRecord>();
   const inFlightQrCodes = new Set<string>();
   const vendorOtpChallenges = new Map<string, VendorOtpChallenge>();
   const vendorPhones = new Map<string, string>();
   const settledExecutionEnvelopes = new Map<string, Record<string, unknown>>();
-  // Velocity is read from the ledger store (durable under PostgreSQL, receipt-derived in memory).
   const getHourlySpentMinor = async (ownerId: string): Promise<number> =>
     ledger.getHourlySpentMinor(ownerId);
-  // QR codes: 64 bits of entropy (was 32). Single-use codes must not be guessable.
   const newQrCode = (): string => `PG-${randomBytes(8).toString('hex').toUpperCase()}`;
   const durability = serverOptions.durability;
   const pushAudit = (event: AuditEvent): void => {
     auditEvents.unshift(event);
-    // Durable evidence is best-effort: the in-memory array stays authoritative
-    // for the read path; a failed insert must not fail the money path.
     if (durability) {
       void durability.saveAuditEvent(event).catch(() => {});
     }
@@ -450,9 +416,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       }
     };
 
-    // Authed mode defaults to restrictive CORS: the dashboard talks through the
-    // same-origin Next proxy, so no cross-origin header is emitted unless
-    // explicitly configured. Demo mode keeps the legacy wildcard.
     const allowedOrigin =
       serverOptions.corsOrigin ?? process.env.CORS_ORIGIN ?? (serverOptions.auth ? '' : '*');
     const corsHeaders: Record<string, string> = {
@@ -518,10 +481,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       return reply(204, {});
     }
 
-    // 0. AuthN/AuthZ gate (P0-1 fix). When auth is configured, identity comes
-    // from the API key ONLY - client-supplied ownerId is cross-checked against
-    // it and mismatches are rejected. Health routes and the signature-verified
-    // PayPal webhook route are the only public paths.
     const PUBLIC_PATHS = new Set(['/healthz', '/health', '/readyz', '/v1/webhooks/paypal']);
     let authedOwnerId: string | null = null;
     let authedBearer = '';
@@ -530,8 +489,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       const bearer = typeof authHeader === 'string' && authHeader.startsWith('Bearer ')
         ? authHeader.slice(7).trim()
         : '';
-      // Clients may send either the bare key or the full "key:ownerId" env
-      // value — strip the owner suffix for lookup so both forms authenticate.
       const lookupKey = bearer.includes(':') ? bearer.slice(0, bearer.indexOf(':')).trim() : bearer;
       const keyOwner = lookupKey.length > 0 ? serverOptions.auth.keys.get(lookupKey) : undefined;
       if (!keyOwner) {
@@ -541,14 +498,8 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         });
       }
       authedOwnerId = keyOwner;
-      // Role lookup must use the SAME normalized key as the auth lookup —
-      // a raw bearer with ':owner' suffix would miss the roles map and
-      // default to admin (proposer escalation bug, caught in re-audit).
       authedBearer = lookupKey;
     }
-    // Maker-checker: money-moving routes require an approver/admin key; a
-    // proposer key may draft (evaluate/agent) but never settle. Demo mode
-    // (auth disabled) is exempt.
     const authedRole: ApiKeyRole | null =
       serverOptions.auth && authedOwnerId !== null
         ? serverOptions.auth.roles?.get(authedBearer) ?? 'admin'
@@ -563,8 +514,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         detail: `Role '${authedRole}' cannot move money — approver or admin key required (maker-checker separation).`,
       });
     };
-    // Resolves the request's owner identity: in authed mode the key's owner is
-    // authoritative (missing body.ownerId defaults to it; mismatches -> null).
     const resolveOwnerId = (bodyOwnerId: unknown): string | null => {
       if (authedOwnerId === null) {
         return typeof bodyOwnerId === 'string' && bodyOwnerId.length > 0 ? bodyOwnerId : null;
@@ -575,7 +524,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       return bodyOwnerId === authedOwnerId ? bodyOwnerId : null;
     };
 
-    // 1. Health & Readiness Routes
     if (options.method === 'GET' && options.url === '/readyz') {
       const ready = serverOptions.readinessCheck ? await serverOptions.readinessCheck() : true;
       return reply(ready ? 200 : 503, {
@@ -587,9 +535,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
 
     if (options.method === 'GET' && (options.url === '/healthz' || options.url === '/health')) {
       const paypalSandboxReady = Boolean(serverOptions.paypalExecutor);
-      // 'postgres' means durable real ledger; 'in_memory' is an explicit demo
-      // fallback (seeded, lost on restart). The dashboard surfaces this so a
-      // demo deployment never masquerades as live financial data.
       const ledgerStore = ledger instanceof PostgresLedger ? 'postgres' : 'in_memory';
       return reply(200, {
         status: 'ok',
@@ -603,7 +548,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       });
     }
 
-    // 2. Deterministic Policy Gate + Grounding Evaluation Route
     if (options.method === 'POST' && options.url === '/v1/evaluate') {
       const body = (options.payload ?? {}) as Partial<EvaluateRequestPayload>;
       const retryAfterSec = checkRateLimit(`evaluate:${authedOwnerId ?? (typeof body.ownerId === 'string' ? body.ownerId : 'anon')}`);
@@ -644,7 +588,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       const policyVersion = body.policyVersion ?? 'v2026.11';
       const idempotencyKey = body.idempotencyKey ?? `idem_${proposal.invoiceId}`;
 
-      // 2a. Untrusted Prompt Injection Scan on Invoice Text
       if (typeof body.invoiceText === 'string' && body.invoiceText.trim().length > 0) {
         const injectionMatch = detectPromptInjection(body.invoiceText);
         if (injectionMatch) {
@@ -678,7 +621,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         }
       }
 
-      // 2b. Character-Offset Quote Grounding Check (Ticket #2 Kernel)
       if (typeof body.invoiceText === 'string' && body.citation) {
         const grounding = verifyQuoteGrounding(body.invoiceText, body.citation);
         if (!grounding.isGrounded) {
@@ -694,9 +636,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         }
       }
 
-      // 2c. Vendor Payout Destination Change Check. The trusted account is
-      // server-authoritative: a client-supplied "trustedAccount" is NEVER used
-      // as the baseline. Vendors without a registered account fail closed.
       if (body.vendorDestination) {
         const expectedTrustedAccount = defaultTrustedVendorAccounts[proposal.vendorName];
         if (expectedTrustedAccount === undefined) {
@@ -730,12 +669,10 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         }
       }
 
-      // Server-authoritative policy inputs (never trust client-supplied overrides).
       const trustedVendors = defaultTrustedVendors;
       const isDuplicateInvoice = settledInvoices.has(settledKey(ownerId, proposal.invoiceId));
       const hourlySpentMinor = await getHourlySpentMinor(ownerId);
 
-      // 2d. Deterministic Policy Gate (Ticket #1 Kernel)
       const decision: PolicyDecision = evaluatePolicy({
         ownerId,
         proposal,
@@ -798,7 +735,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       return reply(200, { decision });
     }
 
-    // 3. Financial Ledger Execution Route (Ticket #3 Kernel)
     if (options.method === 'POST' && options.url === '/v1/execute') {
       const body = (options.payload ?? {}) as Partial<ExecuteRequestPayload>;
       const retryAfterSec = checkRateLimit(`execute:${authedOwnerId ?? (typeof body.ownerId === 'string' ? body.ownerId : 'anon')}`);
@@ -833,11 +769,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         return execRoleBlocked;
       }
 
-      // Execute-time policy re-check (P1 fix): the token was minted at evaluate
-      // time - velocity, duplicates and policy may have drifted since. The gate
-      // disposes again right before money moves. Idempotent REPLAYS (same
-      // owner+key already settled) skip the re-check and return the cached
-      // receipt below - a replay is not a new money-moving decision.
       const isReplay = await ledger.isKnownIdempotencyKey(execOwnerId, execIdempotencyKey);
       if (!isReplay) {
         const execReEval = evaluatePolicy({
@@ -903,7 +834,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         detail: `Settled ${parsedProposal.data.invoiceId} via /v1/execute.`,
       });
 
-      // Ledger settled. Now move money on the configured rail (if any).
       let responseEnvelope: Record<string, unknown>;
       if (serverOptions.paypalExecutor) {
         const paypal: PayPalExecutionResult = await recordSpan(
@@ -920,7 +850,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
             paypal: { ok: true, status: paypal.status, captureId: paypal.captureId },
           };
         } else {
-          // Fail visible, never fail open: settlement stands, the rail failure is reported.
           responseEnvelope = {
             ...result,
             paypalOrderId: `PP-SBX-${result.settlement.settlementId.slice(0, 8).toUpperCase()}`,
@@ -938,7 +867,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       return reply(200, responseEnvelope);
     }
 
-    // 80% Shell Helper: Re-runs deterministic policy gate (TOCTOU check), mints capability token, and settles
     const settleApprovedQrRecord = async (record: QrApprovalRecord): Promise<InjectResponse> => {
       if (record.invoiceText) {
         const injectionMatch = detectPromptInjection(record.invoiceText);
@@ -1079,7 +1007,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       });
     };
 
-    // 4. Single-Use QR / HITL Approval Route (Ticket #4: 20% Kernel)
     if (options.method === 'POST' && options.url === '/v1/hitl/approve') {
       const body = (options.payload ?? {}) as { readonly singleUseCode?: string };
       if (!body.singleUseCode) {
@@ -1090,30 +1017,24 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         return hitlRoleBlocked;
       }
 
-      // Brute-force damper: 64-bit codes + a hard per-code rate limit.
       const hitlRetryAfterSec = checkRateLimit(`hitl:${body.singleUseCode}`);
       if (hitlRetryAfterSec !== null) {
         return reply(429, { success: false, error: 'RATE_LIMITED', retryAfterSeconds: hitlRetryAfterSec }, { 'retry-after': String(hitlRetryAfterSec) });
       }
 
-      // 1. Lookup: unknown code -> 404.
       const approvalRecord = qrApprovals.get(body.singleUseCode);
       if (!approvalRecord) {
         return reply(404, { success: false, error: 'QR_CODE_NOT_FOUND' });
       }
-      // 1b. Tenant isolation: cross-owner approval attempts are 404 (never reveal existence).
       if (authedOwnerId !== null && approvalRecord.ownerId !== authedOwnerId) {
         return reply(404, { success: false, error: 'QR_CODE_NOT_FOUND' });
       }
-      // 2. Replay protection: consumed or in-flight code -> 409 Conflict.
       if (approvalRecord.used || inFlightQrCodes.has(body.singleUseCode)) {
         return reply(409, { success: false, error: 'QR_CODE_ALREADY_USED' });
       }
-      // 3. Expiration: past expiry -> 410 Gone.
       if (Date.now() >= approvalRecord.expiresAtMs) {
         return reply(410, { success: false, error: 'QR_CODE_EXPIRED' });
       }
-      // 4. Mark IN_FLIGHT before awaiting settlement; finalize used=true only on 200 so transient 422s don't brick the QR.
       inFlightQrCodes.add(body.singleUseCode);
       try {
         const result = await settleApprovedQrRecord(approvalRecord);
@@ -1130,13 +1051,11 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       }
     }
 
-    // 5. Catalog (read-only, owner-controlled data the agent may query).
     if (options.method === 'GET' && options.url === '/v1/catalog') {
       const items = catalog.search('', 1000);
       return reply(200, { items });
     }
 
-    // 6. Agent route: the LLM proposes, the deterministic gate disposes.
     if (options.method === 'POST' && options.url === '/v1/agent/run') {
       const body = (options.payload ?? {}) as Partial<AgentRunRequestPayload>;
       const retryAfterSec = checkRateLimit(`agent:${authedOwnerId ?? (typeof body.ownerId === 'string' ? body.ownerId : 'anon')}`);
@@ -1172,7 +1091,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
 
       const thoughts: { round: number; tool: string | null; summary: string }[] = [];
 
-      // 6a. Untrusted prompt-injection scan FIRST - injected text (invoice or goal) never reaches policy.
       const injectionMatch = detectPromptInjection(invoiceText) ?? detectPromptInjection(goal);
       if (injectionMatch) {
         const extractedInv = /\bINV-[A-Z0-9-]+\b/i.exec(invoiceText)?.[0] ?? 'UNTRUSTED-INPUT';
@@ -1208,7 +1126,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         });
       }
 
-      // 6b. Model routing: injected fn > explicit fixture > env providers.
       let chat: AgentChatFn | null;
       let provider: ProviderName;
       if (body.model === 'fixture') {
@@ -1226,7 +1143,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         provider = routed?.provider ?? 'gemini';
       }
 
-      // Fail closed: no model available -> HOLD, never approve.
       if (!chat) {
         return reply(200, {
           decision: {
@@ -1253,8 +1169,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       thoughts.push(...run.thoughts);
 
       if (!run.proposal) {
-        // MODEL_UNAVAILABLE is a dependency failure (fail closed); a round cap
-        // or exhausted script means the agent could not complete - manual review.
         const noProposalReason =
           run.terminalReason === 'MODEL_UNAVAILABLE' ? ReasonCode.DEPENDENCY_UNAVAILABLE : ReasonCode.HOLD_MANUAL_REVIEW;
         return reply(200, {
@@ -1272,7 +1186,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         });
       }
 
-      // 6c. THE GATE disposes of the LLM proposal. Single decision authority.
       const decision: PolicyDecision = evaluatePolicy({
         ownerId,
         proposal: run.proposal,
@@ -1356,7 +1269,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         });
       }
 
-      // APPROVED: store minted token; only approver/admin (and non-preview requests) may settle money.
       capabilityVault.set(decision.approvedToken.approvalId, decision.approvedToken);
       if (isViewOnlyPreview || isProposerRoleOnly) {
         return reply(200, {
@@ -1428,8 +1340,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       });
     }
 
-    // 7. Ledger Transactions & Live Approve/Reject Routes (for UI Dashboard).
-    // Durable mode: real settlements read from PostgreSQL. Demo mode: seed list.
     if (options.method === 'GET' && options.url === '/v1/transactions') {
       const blockedAuditRows = auditEvents
         .filter(
@@ -1601,11 +1511,8 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
         return reply(409, { success: false, error: 'TRANSACTION_ALREADY_FINALIZED', transaction: tx });
       }
 
-      // Identity comes from the API key in authed mode; demo fallback stays
-      // pinned to the seed owner for backward compatibility.
       const txOwnerId = authedOwnerId ?? 'owner_northstar';
 
-      // Atomically claim the transaction before any await to prevent concurrent double-execution.
       tx.canApproveReject = false;
 
       let settled = false;
@@ -1794,7 +1701,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       });
     }
 
-    // 8. Approvals, Vendors, Audit Trail Routes
     if (options.method === 'GET' && options.url === '/v1/approvals') {
       const resolveOutcome = (r: QrApprovalRecord): 'APPROVED' | 'REJECTED' | null => {
         if (r.outcome) return r.outcome;
@@ -2013,14 +1919,11 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       return reply(200, { events: visibleEvents });
     }
 
-    // 9. PayPal Webhook Receiver (public; PayPal's verified signature is the identity).
-    // Reconciliation source of truth: rail state must eventually match the ledger.
     if (options.method === 'POST' && options.url === '/v1/webhooks/paypal') {
       if (!serverOptions.paypalWebhook) {
         return reply(503, { error: 'WEBHOOK_NOT_CONFIGURED', detail: 'PayPal client + PAYPAL_WEBHOOK_ID required.' });
       }
       if (!durability) {
-        // Rail state is only trustworthy if it survives restarts - fail closed.
         return reply(503, { error: 'WEBHOOKS_REQUIRE_DURABLE_STORE', detail: 'PostgreSQL durability required for webhook reconciliation.' });
       }
 
@@ -2038,7 +1941,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
           : {}),
       });
       if (!verify.verified) {
-        // Fail closed: anything that is not provably PayPal is rejected.
         return reply(401, { error: 'WEBHOOK_VERIFICATION_FAILED', reason: verify.reason });
       }
 
@@ -2049,9 +1951,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       }
 
       const action = classifyCaptureEvent(event.event_type);
-      // Webhook -> ledger linkage: custom_id (set at order creation) is what
-      // PayPal reliably surfaces on capture events; reference_id kept as a
-      // fallback. Both carry our idempotency key.
       const rawReference =
         typeof event.resource?.custom_id === 'string' && event.resource.custom_id.length > 0
           ? event.resource.custom_id
@@ -2076,7 +1975,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       return reply(200, { status: 'processed', action, ledgerEntriesUpdated: railUpdate.updated });
     }
 
-    // 10. Reconciliation report (authed): where ledger and rail disagree.
     if (options.method === 'GET' && options.url === '/v1/reconciliation') {
       if (!durability) {
         return reply(200, {
@@ -2110,7 +2008,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
             }
           }
         } catch {
-          // Fail visible at boot via log below; the server still starts.
           console.error('QR approval hydration from durable store failed; starting with empty approvals.');
         }
         try {
@@ -2162,7 +2059,7 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
       new Promise((resolve) => {
         const httpServer: Server = createServer(
           (req: IncomingMessage, res: ServerResponse) => {
-            const MAX_BODY_BYTES = 1_048_576; // 1 MiB limit (OWASP API4:2023)
+            const MAX_BODY_BYTES = 1_048_576;
             const chunks: Buffer[] = [];
             let totalBytes = 0;
             let tooLarge = false;
@@ -2201,7 +2098,6 @@ export function buildServer(initialSeedBalanceMinor = 500_000, serverOptions: Bu
                 const url = rawUrl.split('?')[0] || '/';
                 const incomingRequestId = req.headers['x-request-id'];
                 const requestId = Array.isArray(incomingRequestId) ? incomingRequestId[0] : incomingRequestId;
-                // Forward identity + webhook-signature headers (lowercased by Node).
                 const forwardedHeaders: Record<string, string> = {};
                 const FORWARDABLE = [
                   'authorization',

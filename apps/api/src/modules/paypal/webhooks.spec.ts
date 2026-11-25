@@ -6,13 +6,6 @@ import type { DurableStore } from '../ledger/durability.js';
 import type { AuditEvent, QrApprovalRecord } from '../../server.js';
 import type { PayPalWebhookEvent } from './webhooks.js';
 
-/**
- * Webhook receiver (P1 reconciliation): PayPal's signature is the identity.
- * Anything that is not provably PayPal fails closed; verified events are
- * stored idempotently and drive ledger rail-state updates.
- */
-
-// camelCase shape for direct verifyPayPalWebhookSignature() calls.
 const VALID_HEADERS = {
   authAlgo: 'SHA256withRSA',
   certUrl: 'https://api-m.sandbox.paypal.com/v1/notifications/certs/CERT-36064242-4438-11ee-9f70-3f2d4fb47a34',
@@ -21,7 +14,6 @@ const VALID_HEADERS = {
   transmissionTime: '2026-11-21T10:00:00Z',
 };
 
-// Kebab-case HTTP headers as PayPal transmits them (server.inject calls).
 const HTTP_HEADERS = {
   'paypal-auth-algo': 'SHA256withRSA',
   'paypal-cert-url': 'https://api-m.sandbox.paypal.com/v1/notifications/certs/CERT-36064242-4438-11ee-9f70-3f2d4fb47a34',

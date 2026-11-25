@@ -1,13 +1,8 @@
-
 import { describe, it, expect } from 'vitest';
 import {
   OrderProposalSchema,
   LineItemSchema,
 } from './order.js';
-
-// =====================================================
-// 1. VALID TEST FIXTURES
-// =====================================================
 
 const validLineItem = {
   sku: 'AC-PRO-001',
@@ -28,10 +23,6 @@ const validProposal = {
   grandTotalMinor: 84250,
   notes: 'Monthly subscription',
 };
-
-// =====================================================
-// 2. HELPER: ASSERT A SPECIFIC VALIDATION ERROR
-// =====================================================
 
 type SchemaResult =
   | ReturnType<typeof OrderProposalSchema.safeParse>
@@ -68,10 +59,6 @@ function expectIssueAt(
     `Expected validation issue at ${expectedPath.join('.')}`,
   ).toBeDefined();
 }
-
-// =====================================================
-// 3. BASIC ORDER VALIDATION
-// =====================================================
 
 describe('Order Proposal: Basic Validation', () => {
   it('accepts a correct order proposal', () => {
@@ -179,10 +166,6 @@ describe('Order Proposal: Basic Validation', () => {
   });
 });
 
-// =====================================================
-// 4. SECURITY VALIDATION
-// =====================================================
-
 describe('Order Proposal: Security Validation', () => {
   it('rejects unknown root-level properties', () => {
     const maliciousProposal = {
@@ -276,10 +259,6 @@ describe('Order Proposal: Security Validation', () => {
   });
 });
 
-// =====================================================
-// 5. LINE ITEM VALIDATION
-// =====================================================
-
 describe('Line Item: Validation', () => {
   it('accepts a valid line item', () => {
     const parsed =
@@ -322,10 +301,6 @@ describe('Line Item: Validation', () => {
   });
 });
 
-// =====================================================
-// 6. QUANTITY VALIDATION
-// =====================================================
-
 describe('Line Item: Quantity Validation', () => {
   it('accepts the maximum allowed quantity', () => {
     const item = {
@@ -358,10 +333,6 @@ describe('Line Item: Quantity Validation', () => {
     },
   );
 });
-
-// =====================================================
-// 7. MONEY VALIDATION
-// =====================================================
 
 describe('Line Item: Money Validation', () => {
   it('accepts a valid monetary value', () => {
@@ -405,10 +376,6 @@ describe('Line Item: Money Validation', () => {
     },
   );
 });
-
-// =====================================================
-// 8. LINE ITEM FINANCIAL INVARIANTS
-// =====================================================
 
 describe('Line Item: Financial Invariants', () => {
   it('accepts correct quantity multiplied by unit price', () => {
@@ -459,10 +426,6 @@ describe('Line Item: Financial Invariants', () => {
   });
 });
 
-// =====================================================
-// 9. TAX RATE VALIDATION
-// =====================================================
-
 describe('Line Item: Tax Rate Validation', () => {
   it('accepts a zero tax rate', () => {
     const parsed =
@@ -500,10 +463,6 @@ describe('Line Item: Tax Rate Validation', () => {
     },
   );
 });
-
-// =====================================================
-// 10. ORDER-LEVEL FINANCIAL INVARIANTS
-// =====================================================
 
 describe('Order Proposal: Financial Invariants', () => {
   it('accepts correct subtotal, tax and grand total', () => {
@@ -579,10 +538,6 @@ describe('Order Proposal: Financial Invariants', () => {
     );
   });
 });
-
-// =====================================================
-// 11. TAX CALCULATION TESTS
-// =====================================================
 
 describe('Order Proposal: Tax Calculation', () => {
   it('validates an 18 percent tax calculation', () => {
@@ -673,9 +628,6 @@ describe('Order Proposal: Tax Calculation', () => {
     const parsed =
       OrderProposalSchema.parse(proposal);
 
-    // 0.5 cents -> 0 (nearest even)
-    // 1.5 cents -> 2 (nearest even)
-
     expect(parsed.taxTotalMinor).toBe(2);
     expect(parsed.grandTotalMinor).toBe(6);
   });
@@ -710,17 +662,10 @@ describe('Order Proposal: Tax Calculation', () => {
     const parsed =
       OrderProposalSchema.parse(proposal);
 
-    // Each line: 0.5 cents -> 0 cents.
-    // Total line-level tax: 0 cents.
-
     expect(parsed.taxTotalMinor).toBe(0);
     expect(parsed.grandTotalMinor).toBe(2);
   });
 });
-
-// =====================================================
-// 12. SAFE INTEGER AND OVERFLOW PROTECTION
-// =====================================================
 
 describe('Order Proposal: Numeric Boundary Validation', () => {
   it('rejects an order subtotal exceeding safe integer range', () => {

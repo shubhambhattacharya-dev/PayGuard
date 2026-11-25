@@ -1,4 +1,3 @@
-
 import { describe, it, expect, vi } from 'vitest';
 import {
   ReasonCode,
@@ -85,7 +84,6 @@ describe('packages/contracts: decision.ts capability & security suite', () => {
         new Date(Date.now() + 1_000).toISOString(),
       );
 
-      // Move the clock beyond the token's expiry.
       vi.advanceTimersByTime(1_001);
 
       expect(() => assertApprovedForExecution(token)).toThrow(
@@ -109,9 +107,6 @@ describe('packages/contracts: decision.ts capability & security suite', () => {
     const originalProposal = createValidProposal();
     const token = createToken(originalProposal);
 
-    
-
-    // Simulate a caller trying to alter the original input after approval.
    const originalLineItem = originalProposal.lineItems[0];
 const approvedLineItem = token.proposal.lineItems[0];
 
@@ -131,11 +126,9 @@ const changed = Reflect.set(
 expect(changed).toBe(true);
 expect(originalLineItem.description).toBe('Tampered Plan');
 
-// Approved snapshot must remain unchanged.
 expect(approvedLineItem.description).toBe('Professional Plan');
 expect(() => assertApprovedForExecution(token)).not.toThrow();
 
-    // The token must retain the independently copied approved snapshot.
    expect(approvedLineItem).toBeDefined();
 
 if (approvedLineItem === undefined) {
@@ -146,8 +139,6 @@ expect(approvedLineItem.description).toBe('Professional Plan');
 expect(() => assertApprovedForExecution(token)).not.toThrow();
     expect(() => assertApprovedForExecution(token)).not.toThrow();
   });
-
-  
 
   it('prevents mutation of the approved amount and expiration', () => {
     const token = createToken();
@@ -211,7 +202,6 @@ expect(() => assertApprovedForExecution(token)).not.toThrow();
 
 const publicDecision = toPublicPolicyDecision(internalDecision);
 
-    
     expect(publicDecision.state).toBe('APPROVED');
     expect('approvedToken' in publicDecision).toBe(false);
   });

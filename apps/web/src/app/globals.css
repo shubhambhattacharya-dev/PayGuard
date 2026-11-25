@@ -32,7 +32,6 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Light-mode surface adaptation when user selects Light mode */
 html[data-theme="light"] body {
   background: #f4f7f5;
   color: #0f1c16;
@@ -97,7 +96,6 @@ html[data-theme="light"] .text-\[\#ff8f97\] {
   color: #be123c !important;
 }
 
-/* Natural interaction feedback & WCAG 1.4.11 visible focus rings */
 :where(button) {
   transition:
     box-shadow 150ms ease-out,
@@ -120,7 +118,6 @@ html[data-theme="light"] *:focus-visible {
   outline-color: #15803d;
 }
 
-/* Crisp dark shimmer skeleton (Instagram-style, reduced-motion safe) */
 @keyframes pgShimmer {
   0% { background-position: -200% 0; }
   100% { background-position: 200% 0; }
@@ -141,7 +138,6 @@ html[data-theme="light"] *:focus-visible {
   }
 }
 
-/* Custom AG Grid Quartz Dark styling matching PayGuard Obsidian Forest */
 .ag-theme-quartz {
   --ag-background-color: #111b17;
   --ag-foreground-color: #eaf0eb;
@@ -168,7 +164,6 @@ html[data-theme="light"] *:focus-visible {
   color: #9aa9a0;
 }
 
-/* Cell change flash animation */
 @keyframes cellFlashAmber {
   0% { background-color: #fef3c7; }
   100% { background-color: transparent; }

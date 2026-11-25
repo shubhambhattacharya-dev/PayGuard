@@ -45,7 +45,7 @@ describe('PayGuard HTTP Server Boundary (server.ts)', () => {
   };
 
   beforeEach(() => {
-    server = buildServer(500_000); // $5,000.00 seeded
+    server = buildServer(500_000);
   });
 
   it('GET /healthz returns paypalSandboxReady=false without executor and true when executor is wired', async () => {
@@ -117,7 +117,6 @@ describe('PayGuard HTTP Server Boundary (server.ts)', () => {
     expect(evalData.decision.reasonCode).toBe(ReasonCode.OK_AUTO);
     expect(evalData.approvalId).toBeDefined();
 
-    // Now settle via /v1/execute using the issued approvalId
     const execRes = await server.inject<{
       success: boolean;
       paypalOrderId: string;
@@ -205,7 +204,6 @@ describe('PayGuard HTTP Server Boundary (server.ts)', () => {
     expect(evalBody.decision.reasonCode).toBe(ReasonCode.HOLD_OVER_CAP);
     expect(evalBody.qrApproval.singleUseCode).toMatch(/^PG-/);
 
-    // First human approval via QR code succeeds
     const hitlRes1 = await server.inject<{
       success: boolean;
       gateReRan: boolean;
@@ -224,7 +222,6 @@ describe('PayGuard HTTP Server Boundary (server.ts)', () => {
     expect(hitlRes1.json().toastMessage).toBe('Gate re-ran, decision stood');
     expect(hitlRes1.json().settlement.amountMinor).toBe(84250);
 
-    // Replay of the same single-use QR code is rejected with 409 Conflict
     const hitlReplay = await server.inject<{
       success: boolean;
       error: string;
@@ -280,7 +277,6 @@ describe('PayGuard HTTP Server Boundary (server.ts)', () => {
     expect(evalRes.statusCode).toBe(200);
     const qrCode = evalRes.json().qrApproval.singleUseCode;
 
-    // Simulate the same invoice getting settled via another path before QR scan
     const underCapSameInvoice: OrderProposal = {
       ...validProposalUnderCap,
       invoiceId: 'INV-TOCTOU-99',
@@ -305,7 +301,6 @@ describe('PayGuard HTTP Server Boundary (server.ts)', () => {
       },
     });
 
-    // Now scan the pending QR: gate must re-run, detect duplicate invoice, and reject (422)
     const hitlRes = await server.inject<{
       success: boolean;
       gateReRan: boolean;
@@ -426,7 +421,7 @@ describe('PayGuard HTTP Server Boundary (server.ts)', () => {
   });
 
   it('POST /v1/hitl/approve does not brick QR on 422 INSUFFICIENT_FUNDS', async () => {
-    const lowBalanceServer = buildServer(1000); // $10.00
+    const lowBalanceServer = buildServer(1000);
     const evalRes = await lowBalanceServer.inject<{
       qrApproval: { singleUseCode: string };
     }>({
@@ -448,7 +443,6 @@ describe('PayGuard HTTP Server Boundary (server.ts)', () => {
     expect(firstAttempt.statusCode).toBe(422);
     expect(firstAttempt.json().error).toBe('INSUFFICIENT_FUNDS');
 
-    // Top up account and retry the same QR code — should succeed instead of 409 bricking
     await lowBalanceServer.ledger.seedAccount(ownerId, 200_000);
     const secondAttempt = await lowBalanceServer.inject<{ success: boolean }>({
       method: 'POST',
@@ -476,7 +470,6 @@ describe('PayGuard HTTP Server Boundary (server.ts)', () => {
     expect(res.json().decision.reasonCode).toBe(ReasonCode.REJECT_PROMPT_INJECTION);
     expect(res.json().untrustedInjection?.detected).toBe(true);
 
-    // Blocked injection must also surface on GET /v1/transactions for the KPI strip & PolicyInspector
     const txRes = await server.inject<{
       transactions: { status: string; policyCode: string; untrustedInjection?: { text: string } }[];
     }>({ method: 'GET', url: '/v1/transactions' });
@@ -548,7 +541,6 @@ describe('PayGuard HTTP Server Boundary (server.ts)', () => {
   });
 
   it('onboards an unknown vendor + catalog item via Zod-validated 6-digit WhatsApp sandbox OTP so subsequent <=$100 orders auto-approve', async () => {
-    // 1. Zod rejects numbers-only vendor name and invalid phone numbers
     const badVendor = await server.inject<{ error: string }>({
       method: 'POST',
       url: '/v1/vendors/request-otp',
@@ -563,7 +555,6 @@ describe('PayGuard HTTP Server Boundary (server.ts)', () => {
     });
     expect(badPhone.statusCode).toBe(400);
 
-    // 2. Valid vendor OTP request returns challengeId + sandboxOtpPreview
     const otpReq = await server.inject<{
       challengeId: string;
       sandboxOtpPreview: string;
@@ -581,7 +572,6 @@ describe('PayGuard HTTP Server Boundary (server.ts)', () => {
     expect(otpReq.statusCode).toBe(200);
     expect(otpReq.json().sandboxOtpPreview).toMatch(/^\d{6}$/);
 
-    // 3. Wrong OTP fails with 401
     const wrongVerify = await server.inject({
       method: 'POST',
       url: '/v1/vendors/verify-otp',
@@ -589,7 +579,6 @@ describe('PayGuard HTTP Server Boundary (server.ts)', () => {
     });
     expect(wrongVerify.statusCode).toBe(401);
 
-    // 4. Correct OTP adds vendor to trusted allowlist + catalog item
     const okVerify = await server.inject<{
       success: boolean;
       vendor: { name: string; trusted: boolean };
@@ -604,7 +593,6 @@ describe('PayGuard HTTP Server Boundary (server.ts)', () => {
     expect(okVerify.json().vendor.trusted).toBe(true);
     expect(okVerify.json().catalogItem?.unitPriceMinor).toBe(4500);
 
-    // 5. Evaluating a $45.00 order for the newly verified vendor now AUTO-APPROVES instead of HOLD_VENDOR_UNTRUSTED
     const evalAfter = await server.inject<{ decision: { state: string; reasonCode: string } }>({
       method: 'POST',
       url: '/v1/evaluate',

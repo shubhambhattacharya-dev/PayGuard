@@ -106,7 +106,6 @@ export function LiveGatePanel({
   const [trustedVendors, setTrustedVendors] = useState<string[]>(DEFAULT_TRUSTED_VENDORS);
   const [catalogItems, setCatalogItems] = useState<readonly CatalogOption[]>(DEFAULT_CATALOG_OPTIONS);
 
-  // Simple everyday form state: click to select from list OR type directly
   const [vendorName, setVendorName] = useState<string>('Cedar Supply');
   const [itemName, setItemName] = useState<string>('Office Paper Reams');
   const [quantityInput, setQuantityInput] = useState<string>('4');
@@ -353,7 +352,6 @@ export function LiveGatePanel({
 
   return (
     <section className="mb-6 p-5 rounded-2xl border border-[rgba(222,242,227,0.12)] bg-[#111b17]/85 backdrop-blur-xl shadow-sm">
-      {/* Header Row */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div>
           <div className="flex items-center gap-2">
@@ -406,7 +404,6 @@ export function LiveGatePanel({
         </div>
       </div>
 
-      {/* Native HTML5 Datalists: click input to pick OR type freely in the same input */}
       <datalist id="pg-vendors-list">
         {trustedVendors.map((v) => (
           <option key={v} value={v}>
@@ -422,9 +419,7 @@ export function LiveGatePanel({
         ))}
       </datalist>
 
-      {/* Clean Everyday Form Fields */}
       <div className="grid grid-cols-1 md:grid-cols-12 gap-3.5 mb-4">
-        {/* Field 1: Vendor Name */}
         <div className="md:col-span-4">
           <div className="flex items-center justify-between mb-1">
             <label htmlFor="form-vendor" className="text-xs font-medium text-[#dce5de]">
@@ -463,7 +458,6 @@ export function LiveGatePanel({
           )}
         </div>
 
-        {/* Field 2: Item / Catalog Name */}
         <div className="md:col-span-4">
           <div className="flex items-center justify-between mb-1">
             <label htmlFor="form-item" className="text-xs font-medium text-[#dce5de]">
@@ -493,7 +487,6 @@ export function LiveGatePanel({
           )}
         </div>
 
-        {/* Field 3: Quantity + Unit Price + Auto Total */}
         <div className="md:col-span-4 grid grid-cols-12 gap-2">
           <div className="col-span-4">
             <label htmlFor="form-qty" className="block text-xs font-medium text-[#dce5de] mb-1">
@@ -559,7 +552,6 @@ export function LiveGatePanel({
           )}
         </div>
 
-        {/* Optional Bank Destination Check (shown on /evaluations) */}
         {showBankTamperOption && (
           <div className="md:col-span-12">
             <label className="inline-flex items-center gap-2 text-xs text-[#b8c4bb] cursor-pointer select-none">
@@ -574,7 +566,6 @@ export function LiveGatePanel({
           </div>
         )}
 
-        {/* Bottom Optional Section: Prompt Injection / Invoice Note */}
         <div className="md:col-span-12 pt-1 border-t border-[rgba(222,242,227,0.08)]">
           <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
             <label htmlFor="form-optional-note" className="text-xs font-medium text-[#dce5de]">
@@ -601,7 +592,6 @@ export function LiveGatePanel({
         </div>
       </div>
 
-      {/* Submit Actions */}
       <div className="flex flex-wrap items-center gap-2.5">
         <button
           type="button"
@@ -633,7 +623,6 @@ export function LiveGatePanel({
         </button>
       </div>
 
-      {/* Clean Result Card */}
       {result && (
         <div className="mt-4 text-xs space-y-2 p-3.5 rounded-xl bg-[#15211b]/90 border border-[rgba(222,242,227,0.12)]" aria-live="polite">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -718,7 +707,6 @@ export function LiveGatePanel({
         </div>
       )}
 
-      {/* Manual QR Code Approval Box */}
       <div className="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-[rgba(222,242,227,0.08)]">
         <input
           type="text"

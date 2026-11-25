@@ -1,12 +1,3 @@
-/**
- * PayGuard live smoke test - verifies the REAL integrations end to end.
- * Reads keys from the repo root .env (never committed) and:
- *   A. runs the live AI agent (Gemini -> Groq) through /v1/agent/run
- *   B. creates + captures a real PayPal sandbox order through the executor
- *   C. runs the full gate -> settle -> PayPal rail path via /v1/execute
- *
- * Usage: node scripts/live-smoke.mjs   (from the repository root)
- */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -19,7 +10,6 @@ import { issueApprovedToken, toMoneyMinor } from '../packages/contracts/dist/ind
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-// Minimal .env loader (dev convenience only; production uses real env vars).
 try {
   const env = readFileSync(join(root, '.env'), 'utf8');
   for (const line of env.split(/\r?\n/)) {
@@ -58,7 +48,6 @@ const proposal = {
   grandTotalMinor: toMoneyMinor(6400),
 };
 
-// ---------- A. Live AI agent through the HTTP boundary ----------
 try {
   const server = buildServer();
   const res = await server.inject({
@@ -85,7 +74,6 @@ try {
   report('Live agent (/v1/agent/run)', false, String(error));
 }
 
-// ---------- B. Real PayPal sandbox order via the executor ----------
 const clientId = process.env.PAYPAL_CLIENT_ID;
 const clientSecret = process.env.PAYPAL_CLIENT_SECRET;
 const baseUrl = process.env.PAYPAL_BASE_URL ?? 'https://api-m.sandbox.paypal.com';
@@ -102,8 +90,6 @@ if (clientId && clientSecret && !clientId.includes('your-')) {
   });
   try {
     const result = await executor.execute(token);
-    // Sandbox orders without a payer approval cannot complete capture (422),
-    // but a created order id is live proof of the real rail.
     const created = result.ok || result.stage === 'CAPTURE_ORDER';
     report(
       'PayPal sandbox executor (create+capture)',
@@ -116,7 +102,6 @@ if (clientId && clientSecret && !clientId.includes('your-')) {
     report('PayPal sandbox executor (create+capture)', false, String(error));
   }
 
-  // ---------- C. Full gate -> ledger -> rail through /v1/execute ----------
   try {
     const server = buildServer(500_000, { paypalExecutor: executor });
     const evalRes = await server.inject({

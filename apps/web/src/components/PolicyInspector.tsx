@@ -19,7 +19,6 @@ interface PolicyInspectorProps {
   onApprove: (tx: Transaction) => void;
 }
 
-/** Parses "$142.00" / "$142" into a number; returns null for unknown values. */
 function parseCurrencyAmount(value: string): number | null {
   const match = value.replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
   if (!match) return null;
@@ -56,7 +55,6 @@ export function PolicyInspector({ transaction, onOpenQr, onApprove, className = 
       className={`w-full min-w-0 bg-[#101915]/85 backdrop-blur-xl border-t xl:border-t-0 xl:border-l border-[rgba(222,242,227,0.12)] p-4 sm:p-5 flex flex-col justify-between overflow-x-hidden xl:min-h-[calc(100vh-3.5rem)] z-10 ${className}`}
     >
       <div className="flex-1 flex flex-col justify-between gap-5 min-w-0">
-        {/* Header: Vendor, Amount, Status Badge */}
         <header className="min-w-0">
           <div className="flex items-start justify-between gap-2 mb-1 min-w-0">
             <h2 className="text-base font-semibold text-[#eaf0eb] tracking-tight truncate">{transaction.vendor}</h2>
@@ -76,7 +74,6 @@ export function PolicyInspector({ transaction, onOpenQr, onApprove, className = 
           </div>
         </header>
 
-        {/* Policy Checks List */}
         <section aria-labelledby="policy-checks-heading" className="min-w-0">
           <h3 id="policy-checks-heading" className="text-xs font-semibold text-[#eaf0eb] uppercase tracking-wider mb-2.5">
             Policy checks
@@ -114,14 +111,12 @@ export function PolicyInspector({ transaction, onOpenQr, onApprove, className = 
           </ul>
         </section>
 
-        {/* Invoice Evidence (Dual Box: Green Verified vs Red Untrusted Injection) */}
         {(transaction.verifiedQuote || transaction.untrustedInjection) && (
         <section aria-labelledby="invoice-evidence-heading" className="min-w-0">
           <h3 id="invoice-evidence-heading" className="text-xs font-semibold text-[#eaf0eb] uppercase tracking-wider mb-2">
             Invoice evidence
           </h3>
 
-          {/* Green Verified Box */}
           {transaction.verifiedQuote && (
             <div className="p-3 rounded-xl bg-[rgba(40,187,131,0.1)] backdrop-blur-sm border border-[rgba(40,187,131,0.28)] mb-2.5 min-w-0">
               <div className="flex items-center gap-1.5 text-xs font-semibold text-[#84e5b3] mb-1">
@@ -136,7 +131,6 @@ export function PolicyInspector({ transaction, onOpenQr, onApprove, className = 
             </div>
           )}
 
-          {/* Red Untrusted Injection Box */}
           {transaction.untrustedInjection && (
             <div className="p-3 rounded-xl bg-[rgba(255,123,130,0.1)] backdrop-blur-sm border border-[rgba(255,123,130,0.28)] min-w-0">
               <div className="flex items-center gap-1.5 text-xs font-semibold text-[#ff959a] mb-1">
@@ -154,7 +148,6 @@ export function PolicyInspector({ transaction, onOpenQr, onApprove, className = 
         </section>
         )}
 
-        {/* Policy Limits & Velocity Progress Bar */}
         <section aria-label="Policy limits and velocity" className="grid grid-cols-2 gap-3 p-3 bg-[#15211b]/80 backdrop-blur-sm rounded-xl border border-[rgba(222,242,227,0.12)] text-xs min-w-0">
           <dl className="min-w-0">
             <dt className="text-[11px] text-[#9aa9a0] mb-0.5">Policy limits</dt>
@@ -183,7 +176,6 @@ export function PolicyInspector({ transaction, onOpenQr, onApprove, className = 
           </dl>
         </section>
 
-        {/* Vendor Destination Check */}
         {transaction.vendorDestination && (
           <section aria-label="Vendor destination check" className="p-3 rounded-xl border border-[rgba(222,242,227,0.12)] bg-[#15211b]/80 backdrop-blur-sm text-xs min-w-0">
             <div className="font-semibold text-[#eaf0eb] text-[11px] uppercase tracking-wider mb-2">
@@ -213,7 +205,6 @@ export function PolicyInspector({ transaction, onOpenQr, onApprove, className = 
           </section>
         )}
 
-        {/* One-Time Approval (QR) Mini Card */}
         {transaction.qrCode && (
           <div
             onClick={() => onOpenQr(transaction)}
@@ -239,7 +230,6 @@ export function PolicyInspector({ transaction, onOpenQr, onApprove, className = 
         )}
       </div>
 
-      {/* Approve Button or Final Disposition Footer at Bottom */}
       {transaction.canApproveReject ? (
         <div className="pt-4 border-t border-[rgba(222,242,227,0.12)] mt-5">
           <button

@@ -85,8 +85,6 @@ describe('Tool registry and dispatch (tools.ts)', () => {
   });
 
   it('an inflated model total cannot pass: draft_order recomputes and rejects tampered transcription', () => {
-    // The model claims 6400 of spend but the line math says 9600 - the proposal
-    // builder recomputes from quantity*price, so inconsistent claimed fields never exist.
     const obs = dispatchToolCall(
       {
         tool: 'draft_order',

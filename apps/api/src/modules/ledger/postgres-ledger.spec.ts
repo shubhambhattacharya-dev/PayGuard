@@ -9,10 +9,6 @@ import type { Pool } from 'pg';
 import { createPgPool, runMigrations } from '../../db/pool.js';
 import { PostgresLedger } from './postgres-ledger.js';
 
-// IMPORTANT: never load the repository `.env` here. These specs TRUNCATE
-// ledger tables, so pointing them at a developer's real DATABASE_URL would
-// destroy production/demo data. Only an explicit TEST_DATABASE_URL (preferred)
-// or a LOCAL/CI PostgreSQL instance is allowed.
 const DATABASE_URL =
   process.env.TEST_DATABASE_URL ??
   process.env.DATABASE_URL ??
@@ -40,8 +36,6 @@ async function canReachPostgres(connectionString: string): Promise<boolean> {
   }
 }
 
-// A remote database is never a valid target for a destructive test suite,
-// even in CI. Local Docker/CI service hosts are always numeric hostnames.
 const isSafeDestructiveTarget = isCi || isLocalHost;
 const pgReachable = isSafeDestructiveTarget && (await canReachPostgres(DATABASE_URL));
 
@@ -77,7 +71,7 @@ describe.skipIf(!pgReachable)('PostgresLedger (Ticket 1 Red-First TDD: SELECT FO
 
   beforeEach(async () => {
     await pool.query('TRUNCATE TABLE ledger_entries, ledger_accounts, settled_invoices CASCADE');
-    await ledger.seedAccount(ownerId, 10000); // $100.00
+    await ledger.seedAccount(ownerId, 10000);
   });
 
   afterAll(async () => {
@@ -188,8 +182,6 @@ describe.skipIf(!pgReachable)('PostgresLedger (Ticket 1 Red-First TDD: SELECT FO
     });
     expect(first.success).toBe(true);
 
-    // Production hardening: key conflicts are now a typed error result (HTTP 409),
-    // not a thrown error (which surfaced as an untyped HTTP 500).
     const conflict = await ledger.settleOrder({
       ownerId,
       proposal: p2,
@@ -201,7 +193,6 @@ describe.skipIf(!pgReachable)('PostgresLedger (Ticket 1 Red-First TDD: SELECT FO
   });
 
   describe('Production hardening guards (migration 002)', () => {
-    // $200/hour velocity cap wired like production main.ts.
     let cappedLedger: PostgresLedger;
     const cappedOwner = `${ownerId}_capped`;
 
@@ -211,7 +202,7 @@ describe.skipIf(!pgReachable)('PostgresLedger (Ticket 1 Red-First TDD: SELECT FO
 
     beforeEach(async () => {
       await pool.query('TRUNCATE TABLE ledger_entries, ledger_accounts, settled_invoices CASCADE');
-      await cappedLedger.seedAccount(cappedOwner, 1_000_000); // $10,000 - balance never interferes
+      await cappedLedger.seedAccount(cappedOwner, 1_000_000);
     });
 
     it('rejects a second settlement of the same invoice under a DIFFERENT idempotency key (DUPLICATE_INVOICE)', async () => {
@@ -264,20 +255,18 @@ describe.skipIf(!pgReachable)('PostgresLedger (Ticket 1 Red-First TDD: SELECT FO
           idempotencyKey: key,
         });
 
-      const first = await settle('INV-PG-VEL-1', 15000, 'vel-key-1'); // $150
+      const first = await settle('INV-PG-VEL-1', 15000, 'vel-key-1');
       expect(first.success).toBe(true);
 
-      const second = await settle('INV-PG-VEL-2', 6000, 'vel-key-2'); // $60 -> $210 > $200 cap
+      const second = await settle('INV-PG-VEL-2', 6000, 'vel-key-2');
       expect(second).toEqual({ success: false, error: 'VELOCITY_CAP_EXCEEDED' });
       expect(await cappedLedger.getBalance(cappedOwner)).toBe(1_000_000 - 15000);
 
-      // Under-cap order after the rejection still settles (cap is rolling, not blocking).
-      const third = await settle('INV-PG-VEL-3', 4000, 'vel-key-3'); // $40 -> $190 <= $200
+      const third = await settle('INV-PG-VEL-3', 4000, 'vel-key-3');
       expect(third.success).toBe(true);
     });
 
     it('parallel settles cannot collectively breach the velocity cap', async () => {
-      // 4 x $60 orders against a $200 cap: exactly 3 settle, 1 is rejected.
       const results = await Promise.all(
         [0, 1, 2, 3].map((i) =>
           cappedLedger.settleOrder({

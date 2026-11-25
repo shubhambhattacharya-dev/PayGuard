@@ -1,23 +1,7 @@
 import type { PayPalClient } from './client.js';
 
-/**
- * PayPal webhook receiver support (production hardening).
- *
- * The webhook route is PUBLIC by design - PayPal's signature IS the identity.
- * Verification is delegated to PayPal's authoritative
- * `/v1/notifications/verify-webhook-signature` API; any error or non-SUCCESS
- * verdict fails closed. A client-side cert_url allowlist adds defense in
- * depth before we ever hand attacker-controlled input to PayPal.
- */
-
 export interface PayPalWebhookConfig {
   readonly client: PayPalClient;
-  /**
-   * Webhook ID(s) from developer.paypal.com. PayPal delivers each event under
-   * the webhook that subscribed to it - one event type per webhook is a valid
-   * setup, so verification tries every configured id and fails closed only
-   * when none matches.
-   */
   readonly webhookIds: readonly string[];
 }
 
@@ -38,7 +22,6 @@ export interface PayPalWebhookEvent {
     readonly id?: string;
     readonly status?: string;
     readonly reference_id?: string;
-    /** Set at order creation; PayPal surfaces this on PAYMENT.CAPTURE.* events. */
     readonly custom_id?: string;
     readonly supplementary_data?: {
       readonly related_ids?: {
@@ -50,14 +33,7 @@ export interface PayPalWebhookEvent {
 
 export interface WebhookVerifyInput {
   readonly headers: PayPalWebhookHeaders;
-  /** Parsed webhook_event JSON exactly as PayPal transmitted it. */
   readonly event: unknown;
-  /**
-   * The RAW request body as received (optional). When present it is spliced
-   * into the postback byte-for-byte: PayPal requires webhook_event to match
-   * the original transmission exactly — parse→re-serialize can fail
-   * verification per PayPal's integration guide.
-   */
   readonly rawEventBody?: string;
 }
 
@@ -79,7 +55,6 @@ export type RailAction =
   | 'RAIL_REFUNDED'
   | 'RECORDED';
 
-// Only PayPal-controlled cert hosts are acceptable (api-m.* and api-3.*).
 const PAYPAL_CERT_HOST_PATTERN = /^https:\/\/api(-m|-3)?\.(sandbox\.)?paypal\.com\//;
 
 interface VerifySignatureApiResponse {
@@ -128,8 +103,6 @@ export async function verifyPayPalWebhookSignature(
     try {
       let requestInit: { body?: unknown; rawBody?: string };
       if (hasRawBody) {
-        // Splice the ORIGINAL bytes in: webhook_event must match the
-        // transmitted body byte-for-byte, and parse→stringify may deviate.
         const wrapper = JSON.stringify({ ...verifyFields, webhook_id: webhookId });
         requestInit = {
           rawBody: `${wrapper.slice(0, -1)},"webhook_event":${input.rawEventBody}}`,
@@ -161,11 +134,6 @@ export async function verifyPayPalWebhookSignature(
   return lastOutcome ?? { verified: false, reason: 'PAYPAL_REJECTED' };
 }
 
-/**
- * Maps a verified PayPal event_type to the reconciliation action applied to
- * our ledger entry. Unknown/irrelevant event types are recorded but change
- * nothing (`RECORDED`).
- */
 export function classifyCaptureEvent(eventType?: string): RailAction {
   switch (eventType) {
     case 'PAYMENT.CAPTURE.COMPLETED':

@@ -46,7 +46,6 @@ export function Sidebar({ collapsed = false, onToggleCollapse }: SidebarProps = 
       }`}
     >
       <div>
-        {/* Minimal Brand Anchor */}
         <div className="px-4 h-14 flex items-center justify-between border-b border-[rgba(222,242,227,0.12)]">
           <Link href="/" className="flex items-center gap-2.5">
             <div className="w-7 h-7 rounded-lg bg-[rgba(200,241,105,0.12)] border border-[rgba(200,241,105,0.35)] flex items-center justify-center text-[#c8f169] shadow-sm">
@@ -67,7 +66,6 @@ export function Sidebar({ collapsed = false, onToggleCollapse }: SidebarProps = 
           )}
         </div>
 
-        {/* Clean, Uncluttered Navigation */}
         <nav aria-label="Primary navigation" className="flex gap-1 overflow-x-auto px-2.5 py-2.5 md:block md:space-y-1 md:overflow-visible md:py-4">
           {NAV_ITEMS.map((item) => {
             const isActive = pathname.startsWith(item.href) || (item.href === '/payments' && pathname === '/');
@@ -91,7 +89,6 @@ export function Sidebar({ collapsed = false, onToggleCollapse }: SidebarProps = 
         </nav>
       </div>
 
-      {/* Bottom Policy Guardrails Summary + Landing Link */}
       <div className="hidden md:block p-3 space-y-2.5 border-t border-[rgba(222,242,227,0.12)]">
         <div className="p-3 rounded-xl bg-[#15211b]/80 backdrop-blur-md border border-[rgba(222,242,227,0.1)] space-y-2 text-[11px]">
           <div className="flex items-center justify-between text-[#9aa9a0]">

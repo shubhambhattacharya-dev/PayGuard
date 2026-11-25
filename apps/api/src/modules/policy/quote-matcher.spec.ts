@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { verifyQuoteGrounding } from './quote-matcher.js';
 
-describe('verifyQuoteGrounding (ContractLens Line 42 Character-Offset Gate)', () => {
+describe('verifyQuoteGrounding (character-offset quote gate)', () => {
   const sampleContract =
     'Clause 4.2: Late payments incur a 2% monthly fee. Total due: $95.00.';
 
@@ -55,7 +55,6 @@ describe('verifyQuoteGrounding (ContractLens Line 42 Character-Offset Gate)', ()
   });
 
   it('rejects hallucinated quotes that do not match sourceText[startOffset..endOffset] with OFFSET_MISMATCH', () => {
-    // Index 12..48 is "Late payments incur a 2% monthly fee", but LLM claims "5% monthly fee"
     const result = verifyQuoteGrounding(sampleContract, {
       claim: 'Late fee is 5%',
       exactQuote: 'Late payments incur a 5% monthly fee',
@@ -70,7 +69,6 @@ describe('verifyQuoteGrounding (ContractLens Line 42 Character-Offset Gate)', ()
   });
 
   it('approves grounded quotes when sourceText.slice(startOffset, endOffset) strictly matches exactQuote', () => {
-    // Index 12..48 in sampleContract is exactly "Late payments incur a 2% monthly fee"
     const result = verifyQuoteGrounding(sampleContract, {
       claim: 'Late fee is 2% per month',
       exactQuote: 'Late payments incur a 2% monthly fee',

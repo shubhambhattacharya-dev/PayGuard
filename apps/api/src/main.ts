@@ -46,25 +46,18 @@ let durabilityStore: PostgresDurabilityStore | undefined;
 if (databaseUrl) {
   pool = createPgPool(databaseUrl);
   await runMigrations(pool);
-  // Seed demo accounts only if missing so restarts never overwrite real balances.
   await pool.query(
     `INSERT INTO ledger_accounts (owner_id, balance_minor)
      VALUES ($1, $3), ($2, $3)
      ON CONFLICT (owner_id) DO NOTHING`,
     ['owner_northstar', 'owner_1', DEFAULT_SEED_BALANCE_MINOR],
   );
-  // Velocity cap enforced INSIDE the settle transaction (race-proof).
   ledger = new PostgresLedger(pool, HOURLY_VELOCITY_CAP_MINOR);
   durabilityStore = new PostgresDurabilityStore(pool);
 }
 
 const langfuse = createLangfuseReporter();
 
-// --- Auth: fail closed at boot (P0-1 fix) ---
-// Production requires PAYGUARD_API_KEYS ("apiKey:ownerId[:role],..." CSV).
-// Role (optional, default admin): 'proposer' drafts, 'approver' moves money,
-// 'admin' does both (maker-checker separation).
-// Demo/test mode must be an explicit opt-out via PAYGUARD_AUTH_DISABLED=true.
 const authDisabled = process.env.PAYGUARD_AUTH_DISABLED === 'true';
 const rawKeys = process.env.PAYGUARD_API_KEYS?.trim() ?? '';
 const authKeys = new Map<string, string>();
@@ -89,13 +82,9 @@ for (const role of authRoles.values()) {
   roleCounts[role] = (roleCounts[role] ?? 0) + 1;
 }
 
-// --- PayPal webhook verification inputs ---
-// PAYPAL_WEBHOOK_ID accepts a CSV: one webhook per event type is a valid
-// PayPal setup, and every webhook has its own verification id.
 const paypalWebhook =
   paypalExecutor && paypalWebhookIds.length > 0
     ? {
-        // The webhook verifies signatures through the same OAuth-capable client.
         client: createPayPalClient({
           clientId: paypalClientId,
           clientSecret: paypalClientSecret,

@@ -13,11 +13,6 @@ export interface CatalogStore {
   listAll(): readonly CatalogItem[];
 }
 
-/**
- * Owner-controlled catalog data (OWASP LLM04): the model can read it via
- * search_catalog but can never write it. Only admin/approver OTP onboarding
- * can register new SKUs. Prices are integer minor units.
- */
 export const DEFAULT_CATALOG: readonly CatalogItem[] = [
   { sku: 'CED-PPR-01', name: 'Office Paper Reams', description: 'Cedar Supply copy paper, 500 sheets per ream', unitPriceMinor: 1600, vendorName: 'Cedar Supply' },
   { sku: 'AC-PRO-001', name: 'Aster Cloud Professional Plan', description: 'Aster Cloud monthly professional subscription', unitPriceMinor: 84250, vendorName: 'Aster Cloud' },

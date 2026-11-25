@@ -114,7 +114,6 @@ export function LandingPage() {
 
   return (
     <div className="min-h-screen bg-[#0b1210] text-[#eaf0eb] selection:bg-[#c8f169] selection:text-[#10170d]">
-      {/* Sticky Header */}
       <header className="h-[72px] sticky top-0 z-40 border-b border-[rgba(229,245,232,0.09)] bg-[rgba(11,18,16,0.85)] backdrop-blur-md">
         <nav className="max-w-[1200px] mx-auto px-5 sm:px-7 h-full flex items-center justify-between gap-6" aria-label="Main navigation">
           <Link href="/" className="inline-flex items-center gap-2.5 font-extrabold text-base tracking-[-0.04em]">
@@ -149,7 +148,6 @@ export function LandingPage() {
             </Link>
           </div>
 
-          {/* Mobile Menu Toggle */}
           <button
             type="button"
             className="md:hidden p-2 rounded-lg border border-[rgba(222,242,227,0.16)] text-[#eaf0eb] hover:border-[#c8f169]"
@@ -161,7 +159,6 @@ export function LandingPage() {
           </button>
         </nav>
 
-        {/* Keyboard-Accessible Mobile Drawer */}
         {mobileMenuOpen && (
           <div className="md:hidden border-b border-[rgba(222,242,227,0.12)] bg-[#111b17] px-5 py-4 space-y-3 text-xs font-semibold">
             <a href="#controls" onClick={() => setMobileMenuOpen(false)} className="block py-1.5 text-[#c0cbc3] hover:text-[#c8f169]">Controls</a>
@@ -181,7 +178,6 @@ export function LandingPage() {
       </header>
 
       <main id="top">
-        {/* Hero Section with Subtle Grid + Ambient Glow + Explorable Preview */}
         <section className="relative isolate overflow-hidden py-16 md:py-24 bg-[radial-gradient(ellipse_at_79%_41%,rgba(52,117,80,0.18),transparent_42%),linear-gradient(180deg,#0b1210_0%,#0c1511_100%)]">
           <div
             aria-hidden="true"
@@ -230,10 +226,8 @@ export function LandingPage() {
               </div>
             </div>
 
-            {/* Explorable Tilted Dashboard Preview */}
             <div className="relative lg:perspective-[1200px]" id="product">
               <div className="relative overflow-hidden rounded-[13px] border border-[rgba(224,243,227,0.17)] bg-[#101915] shadow-[0_35px_95px_rgba(0,0,0,0.45)] lg:[transform:rotateY(-4deg)_rotateX(2deg)] hover:[transform:rotateY(0)_rotateX(0)] transition-transform duration-500">
-                {/* Window Bar + Explorable Tab Switcher */}
                 <div className="min-h-[38px] px-3 py-1.5 border-b border-[rgba(222,242,227,0.12)] flex flex-wrap items-center justify-between gap-2 font-mono text-[10px] text-[#6f8076]">
                   <div className="flex items-center gap-3">
                     <span className="flex gap-1">
@@ -267,7 +261,6 @@ export function LandingPage() {
                   </div>
                 </div>
 
-                {/* Explorable Body */}
                 <div className="p-4 sm:p-5 space-y-3">
                   <div className="flex items-center justify-between">
                     <div>
@@ -380,7 +373,6 @@ export function LandingPage() {
                 </div>
               </div>
 
-              {/* Floating Decision Recorded Card */}
               <div className="hidden sm:flex items-center gap-2.5 px-3.5 py-2.5 rounded-lg border border-[rgba(226,244,229,0.17)] bg-[#17231c] shadow-xl absolute -right-3 bottom-6">
                 <span className="w-6 h-6 rounded-md bg-[#c8f169] text-[#10170d] grid place-items-center">
                   <Check className="w-3.5 h-3.5 stroke-[2.5]" />
@@ -394,7 +386,6 @@ export function LandingPage() {
           </div>
         </section>
 
-        {/* Principles Bar */}
         <div className="border-y border-[rgba(222,242,227,0.12)] bg-[#0e1713]">
           <div className="max-w-[1200px] mx-auto px-5 sm:px-7 py-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-center">
             <div className="text-xs text-[#839188]">Designed to make the boundary between proposal and payment explicit.</div>
@@ -413,7 +404,6 @@ export function LandingPage() {
           </div>
         </div>
 
-        {/* 01 Controls */}
         <section id="controls" className="py-20 md:py-24">
           <div className="max-w-[1200px] mx-auto px-5 sm:px-7">
             <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-10">
@@ -451,7 +441,6 @@ export function LandingPage() {
           </div>
         </section>
 
-        {/* 02 Scroll-Animated 4-Step Workflow */}
         <section ref={workflowRef} id="workflow" className="py-20 border-y border-[rgba(222,242,227,0.12)] bg-[#101a15]">
           <div className="max-w-[1200px] mx-auto px-5 sm:px-7">
             <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-12">
@@ -490,7 +479,6 @@ export function LandingPage() {
           </div>
         </section>
 
-        {/* 03 Interactive Sample Payment Demo */}
         <section id="demo" className="py-20">
           <div className="max-w-[1200px] mx-auto px-5 sm:px-7">
             <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-8">
@@ -561,7 +549,6 @@ export function LandingPage() {
           </div>
         </section>
 
-        {/* 04 Real Engineering Evidence & Architecture (Zero Invented Logos) */}
         <section id="architecture" className="py-16 border-t border-[rgba(222,242,227,0.12)] bg-[#0e1713]">
           <div className="max-w-[1200px] mx-auto px-5 sm:px-7 space-y-8">
             <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
@@ -593,7 +580,6 @@ export function LandingPage() {
           </div>
         </section>
 
-        {/* Closing CTA */}
         <section className="py-20">
           <div className="max-w-[1200px] mx-auto px-5 sm:px-7">
             <div className="p-8 sm:p-11 rounded-[10px] border border-[rgba(200,241,105,0.23)] bg-[radial-gradient(ellipse_at_88%_40%,rgba(200,241,105,0.12),transparent_35%),linear-gradient(110deg,#14221a,#101a15)] flex flex-col md:flex-row items-start md:items-center justify-between gap-6">

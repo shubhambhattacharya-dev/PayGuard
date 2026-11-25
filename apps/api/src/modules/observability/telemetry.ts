@@ -31,10 +31,6 @@ export interface LangfuseReporter {
   emitTrace(trace: TracePayload): void;
 }
 
-/**
- * Zero-dependency, fail-open Langfuse ingestion reporter.
- * Never throws or blocks the payment/policy critical path.
- */
 export function createLangfuseReporter(
   env: NodeJS.ProcessEnv = process.env,
   fetchFn: typeof fetch = fetch,
@@ -98,7 +94,6 @@ export function createLangfuseReporter(
         });
       }
 
-      // Fire-and-forget with strict timeout so Langfuse outages never affect payments.
       void fetchFn(`${baseUrl}/api/public/ingestion`, {
         method: 'POST',
         headers: {
@@ -108,7 +103,6 @@ export function createLangfuseReporter(
         body: JSON.stringify({ batch }),
         signal: AbortSignal.timeout(3_000),
       }).catch(() => {
-        // Intentionally swallowed: telemetry must fail open.
       });
     },
   };

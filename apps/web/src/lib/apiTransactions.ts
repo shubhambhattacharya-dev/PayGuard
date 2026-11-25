@@ -1,10 +1,5 @@
 import { PolicyReasonCode, Transaction, TransactionStatus } from './types';
 
-/**
- * Shape returned by GET /v1/transactions. Every field except `id`, `status`,
- * `policyCode` and `canApproveReject` is optional because the durable ledger
- * only guarantees the settlement columns it actually persists.
- */
 export interface ApiTransactionRow {
   id?: unknown;
   vendor?: unknown;
@@ -48,11 +43,6 @@ const VALID_POLICY_CODES: ReadonlySet<PolicyReasonCode> = new Set<PolicyReasonCo
   'DEPENDENCY_UNAVAILABLE',
 ]);
 
-/**
- * Static policy constants shown in the inspector. Vendor velocity is deliberately
- * marked as unavailable: the durable ledger endpoint does not return it, and
- * inventing a number here would misrepresent live data.
- */
 export const KNOWN_POLICY_LIMITS = {
   autoExecuteCap: '$100.00',
   vendorVelocitySpent: '—',
@@ -91,11 +81,6 @@ export function isValidApiTransactionRow(value: unknown): value is ApiTransactio
   );
 }
 
-/**
- * Converts a validated API row into the richer UI model. Fields the API does not
- * persist (reasoning trace, quote evidence, per-rule checks) stay empty instead
- * of falling back to demo values.
- */
 export function mapApiTransactionRow(row: ApiTransactionRow): Transaction | null {
   if (!isValidApiTransactionRow(row)) return null;
   const amountMinor = (row.amountMinor as number | undefined) ?? 0;
@@ -159,7 +144,6 @@ export function mapApiTransactionRow(row: ApiTransactionRow): Transaction | null
   };
 }
 
-/** Filters out malformed rows so one bad record cannot blank the whole ledger. */
 export function mapApiTransactions(rows: unknown): Transaction[] {
   if (!Array.isArray(rows)) return [];
   return rows
